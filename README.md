@@ -16,8 +16,6 @@ _Note .NET SDK is required to have all features. However, the core features can 
 [![CI](https://github.com/oleg-shilo/cs-script/actions/workflows/dotnet-desktop.yml/badge.svg)](https://github.com/oleg-shilo/cs-script/actions/workflows/dotnet-desktop.yml)
 [![Build status](https://ci.appveyor.com/api/projects/status/github/oleg-shilo/cs-script?svg=true)](https://ci.appveyor.com/project/oleg-shilo/cs-script) [![Chocolatey Version](http://img.shields.io/chocolatey/v/cs-script.svg?style=flat-square)](http://chocolatey.org/packages/cs-script) [![Chocolatey Downloads](http://img.shields.io/chocolatey/dt/cs-script.svg?style=flat-square)](http://chocolatey.org/packages/cs-script) [![NuGet version (CS-Script)](https://img.shields.io/nuget/v/CS-Script.svg?style=flat-square)](https://www.nuget.org/packages/CS-Script/)
 
-[![paypal](https://www.paypalobjects.com/en_US/i/btn/btn_donateCC_LG.gif)](https://oleg-shilo.github.io/cs-script/Donation.html)
-
 CS-Script is a CLR-based scripting system that uses ECMA-compliant C# as a programming language.
 
 CS-Script is one of the most mature C# scripting solutions. It became publicly available in 2004, just two years after the first release of .NET. It was the first comprehensive scripting platform for .NET
