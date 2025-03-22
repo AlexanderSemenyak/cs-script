@@ -1,10 +1,34 @@
 using System;
-using static System.Environment;
-using System.Linq;
-using System.Diagnostics;
 using System.Collections.Generic;
-using static dbg; // to use 'print' instead of 'dbg.print'
+using System.Diagnostics;
+using static System.Environment;
 using System.IO;
+using System.Linq;
+using static dbg; // to use 'print' instead of 'dbg.print'
+
+static class Extensions
+{
+    internal static string Expand(this string text) => Environment.ExpandEnvironmentVariables(text);
+
+    public static string GetEnvar(this string name) => Environment.GetEnvironmentVariable(name);
+}
+
+namespace Xunit.Abstractions
+{
+    public interface ITestOutputHelper
+    {
+        void WriteLine(string message);
+
+        void WriteLine(string format, params object[] args);
+    }
+
+    public class ConsoleTestOutputHelper : ITestOutputHelper
+    {
+        public void WriteLine(string message) => Console.WriteLine(message);
+
+        public void WriteLine(string format, params object[] args) => Console.WriteLine(format, args);
+    }
+}
 
 namespace Xunit
 {
@@ -20,6 +44,7 @@ namespace Xunit
 
     class FactAttribute : Attribute
     {
+        public string Skip { get; set; }
     }
 
     class FactWinOnlyAttribute : Attribute
@@ -35,16 +60,21 @@ namespace Xunit
 
     class Assert
     {
-        static public void False(bool actualValue)
+        static public void Fail(string context = null)
         {
-            if (actualValue != false)
-                throw new TestFailureException($"Failed: the actual value is 'false'{NewLine}");
+            throw new TestFailureException($"Failed: ... {NewLine}\n{context}".TrimEnd());
         }
 
-        static public void True(bool actualValue)
+        static public void False(bool actualValue, string context = null)
+        {
+            if (actualValue != false)
+                throw new TestFailureException($"Failed: the actual value is 'false'{NewLine}\n{context}".TrimEnd());
+        }
+
+        static public void True(bool actualValue, string context = null)
         {
             if (actualValue != true)
-                throw new TestFailureException($"Failed: the actual value is 'true'{NewLine}");
+                throw new TestFailureException($"Failed: the actual value is 'true'{NewLine}\n{context}".TrimEnd());
         }
 
         static public void Contains<T>(IEnumerable<T> collection, T item)
@@ -78,13 +108,13 @@ namespace Xunit
                                                $"\t'{actual}'");
         }
 
-        static public void Equal(string expected, string actual)
+        static public void Equal(string expected, string actual, string context = null)
         {
             if (actual != expected)
                 throw new TestFailureException($"Failed: the expected value {NewLine}" +
                                                $"\t'{expected}'{NewLine}" +
                                                $"is different to actual value{NewLine}" +
-                                               $"\t'{actual}'");
+                                               $"\t'{actual}'\n{context}".TrimEnd());
         }
     }
 
@@ -115,7 +145,7 @@ namespace Xunit
         public static bool IsWin(this OperatingSystem sys)
             => !(Environment.OSVersion.Platform == PlatformID.Unix || Environment.OSVersion.Platform == PlatformID.MacOSX);
 
-        public static string Run(this string exe, string args = null, string dir = null)
+        public static (string output, int exitCode) Run(this string exe, string args = null, string dir = null)
         {
             var process = new Process();
 
@@ -136,7 +166,7 @@ namespace Xunit
             var output = process.StandardOutput.ReadToEnd();
             process.WaitForExit();
 
-            return output;
+            return (output, process.ExitCode);
         }
     }
 }

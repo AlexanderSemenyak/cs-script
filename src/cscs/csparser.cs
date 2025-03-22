@@ -1,14 +1,14 @@
-using CSScripting;
-using CSScriptLib;
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using static System.Environment;
 using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading;
-using static System.Environment;
+using CSScripting;
+using CSScriptLib;
 
 namespace csscript
 {
@@ -40,15 +40,15 @@ namespace csscript
                 this.preScript = preScript;
 
                 int rBracket = -1;
-                int lBracket = statement.IndexOf("(");
+                int lBracket = statement.IndexOf('(');
                 if (lBracket != -1)
                 {
-                    List<string> argList = new List<string>();
+                    var argList = new List<string>();
 
                     argList.Add(CSSUtils.Args.DefaultPrefix + "nl");
                     argList.Add(statement.Substring(0, lBracket).Trim());
 
-                    rBracket = statement.LastIndexOf(")");
+                    rBracket = statement.LastIndexOf(')');
                     if (rBracket == -1)
                         throw new ApplicationException("Cannot parse statement (" + statement + ").");
 
@@ -67,11 +67,11 @@ namespace csscript
                 }
                 else
                 {
-                    int pos = statement.LastIndexOfAny(new char[] { ' ', '\t', ';' });
+                    int pos = statement.LastIndexOfAny([' ', '\t', ';']);
                     if (pos != -1)
-                        args = new string[] { CSSUtils.Args.DefaultPrefix + "nl", statement.Substring(0, pos) };
+                        args = [CSSUtils.Args.DefaultPrefix + "nl", statement.Substring(0, pos)];
                     else
-                        args = new string[] { CSSUtils.Args.DefaultPrefix + "nl", statement };
+                        args = [CSSUtils.Args.DefaultPrefix + "nl", statement];
                 }
             }
 
@@ -113,8 +113,8 @@ namespace csscript
             /// </summary>
             public int EoAuthnCap = 0x40; //EoAuthnCap.DynamicCloaking
 
-            static char[] tokenDelimiters = new char[] { '(', ')' };
-            static char[] argDelimiters = new char[] { ',' };
+            static char[] tokenDelimiters = ['(', ')'];
+            static char[] argDelimiters = [','];
 
             /// <summary>
             /// Initializes a new instance of the <see cref="InitInfo"/> class.
@@ -161,11 +161,11 @@ namespace csscript
                     throw new ApplicationException("Cannot parse //css_init directive. '" + statement + "' is in unexpected format.");
             }
 
-            bool TryParseInt(string text, out int value)
+            static bool TryParseInt(string text, out int value)
             {
                 text = text.TrimStart();
                 if (text.StartsWith("0x", StringComparison.Ordinal))
-                    return int.TryParse(text.Substring(2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out value);
+                    return int.TryParse(text[2..], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out value);
                 else
                     return int.TryParse(text, out value);
             }
@@ -214,7 +214,7 @@ namespace csscript
             {
                 try
                 {
-                    if (statement.Contains("*") || statement.Contains("?"))
+                    if (statement.Contains('*') || statement.Contains('?'))
                     {
                         //e.g. resolve ..\subdir\*.cs into multiple concrete imports
                         string statementToParse = statement.Replace("($this.name)", Path.GetFileNameWithoutExtension(parentScript));
@@ -224,7 +224,7 @@ namespace csscript
 
                         string filePattern = parts[0];
 
-                        List<ImportInfo> result = new List<ImportInfo>();
+                        var result = new List<ImportInfo>();
 
                         // To ensure that parent script dir is on top. Required because
                         // FileParser.ResolveFiles stops searching when it finds.
@@ -247,7 +247,7 @@ namespace csscript
                         if (statement.Length > 1 && (statement[0] == '.' && statement[1] != '.')) //just a single-dot start dir
                             statement = parentScript.GetDirName().PathJoin(statement).GetFullPath();
 
-                        return new[] { new ImportInfo(statement, parentScript, context) };
+                        return [new ImportInfo(statement, parentScript, context)];
                     }
                 }
                 catch (InvalidDirectiveException e)
@@ -298,14 +298,14 @@ namespace csscript
 
             void InternalInit(string[] statementParts, int startIndex, string context)
             {
-                List<string[]> renameingMap = new List<string[]>();
+                List<string[]> renameingMap = [];
 
                 for (int i = startIndex; i < statementParts.Length;)
                 {
                     statementParts[i] = statementParts[i].Trim();
                     if (statementParts[i] == "rename_namespace" && i + 2 < statementParts.Length)
                     {
-                        string[] names = new string[] { statementParts[i + 1], statementParts[i + 2].Replace(")", "") };
+                        string[] names = [statementParts[i + 1], statementParts[i + 2].Replace(")", "")];
                         renameingMap.Add(names);
                         i += 3;
                     }
@@ -318,7 +318,7 @@ namespace csscript
                         throw new InvalidDirectiveException("Cannot parse \"" + context ?? "//css_import" + "...\"");
                 }
                 if (renameingMap.Count == 0)
-                    this.renaming = new string[0][];
+                    this.renaming = [];
                 else
                     this.renaming = renameingMap.ToArray();
             }
@@ -349,8 +349,8 @@ namespace csscript
             public bool preserveMain = false;
         }
 
-        List<int[]> stringRegions = new List<int[]>();
-        List<int[]> commentRegions = new List<int[]>();
+        List<int[]> stringRegions = [];
+        List<int[]> commentRegions = [];
 
         internal static bool NeedInitEnvironment = true;
 
@@ -445,7 +445,7 @@ namespace csscript
             if (!isFile)
                 Init(script, "", directivesToSearch, probingDirs);
             else
-                using (StreamReader sr = new StreamReader(script))
+                using (var sr = new StreamReader(script))
                 {
                     string code = sr.ReadToEnd();
                     Init(code, script, directivesToSearch, probingDirs);
@@ -455,7 +455,7 @@ namespace csscript
         /// <summary>
         /// The result of search for additional C# script directives to search (directive vs. value).
         /// </summary>
-        public Dictionary<string, List<string>> CustomDirectives = new Dictionary<string, List<string>>();
+        public Dictionary<string, List<string>> CustomDirectives = [];
 
         public IList<string> GetDirective(string name)
         {
@@ -602,21 +602,17 @@ namespace csscript
 
             // analyze resource references this directive is special as it may contain two paths
             // //css_res Resources1.resx;", //css_res Form1.resx, Scripting.Form1.resources;"
-            foreach (string statement in GetRawStatements("//css_resource", endCodePos))
+            foreach (string statement in GetRawStatements("//css_resource", endCodePos).Concat(
+                                         GetRawStatements("//css_res", endCodePos)))
+            {
                 resFiles.Add(statement.NormaliseAsDirectiveOf(file, multiPathDelimiter: ','));
-            foreach (string statement in GetRawStatements("//css_res", endCodePos))
-                resFiles.Add(statement.NormaliseAsDirectiveOf(file, multiPathDelimiter: ','));
+            }
 
             //analyse extra search (probing) dirs
-            foreach (string statement in GetRawStatements("//css_searchdir", endCodePos))
+            foreach (string statement in GetRawStatements("//css_searchdir", endCodePos).Concat(
+                                         GetRawStatements("//css_dir", endCodePos)))
             {
-                var pattern = Environment.ExpandEnvironmentVariables(UnescapeDirectiveDelimiters(statement)).Trim();
-                searchDirs.AddRange(workingDir.GetMatchingDirs(pattern));
-            }
-            foreach (string statement in GetRawStatements("//css_dir", endCodePos))
-            {
-                var pattern = Environment.ExpandEnvironmentVariables(UnescapeDirectiveDelimiters(statement)).Trim();
-                searchDirs.AddRange(workingDir.GetMatchingDirs(pattern));
+                searchDirs.AddRange(workingDir.GetMatchingDirs(UnescapeDirectiveDelimiters(statement).Expand().Trim()));
             }
 
             if (HasRawStatement("//css_winapp", endCodePos))
@@ -662,18 +658,11 @@ namespace csscript
             }
         }
 
-        class RenamingInfo
+        class RenamingInfo(int stratPos, int endPos, string newValue)
         {
-            public RenamingInfo(int stratPos, int endPos, string newValue)
-            {
-                this.stratPos = stratPos;
-                this.endPos = endPos;
-                this.newValue = newValue;
-            }
-
-            public int stratPos;
-            public int endPos;
-            public string newValue;
+            public int stratPos = stratPos;
+            public int endPos = endPos;
+            public string newValue = newValue;
         }
 
         class RenamingInfoComparer : System.Collections.Generic.IComparer<RenamingInfo>
@@ -699,7 +688,7 @@ namespace csscript
         public void DoRenaming(string[][] renamingMap, bool preserveMain)
         {
             int renamingPos = -1;
-            List<RenamingInfo> renamingPositions = new List<RenamingInfo>();
+            List<RenamingInfo> renamingPositions = [];
 
             int pos = FindStatement("Main", 0);
             while (!preserveMain && pos != -1 && renamingPos == -1)
@@ -777,10 +766,11 @@ namespace csscript
                 RenamingInfo info = renamingPositions[i];
                 int prevEnd = ((i - 1) >= 0) ? renamingPositions[i - 1].endPos : 0;
 
-                sb.Append(Code.Substring(prevEnd, info.stratPos - prevEnd));
-                sb.Append(info.newValue);
+                sb.Append(Code.Substring(prevEnd, info.stratPos - prevEnd))
+                  .Append(info.newValue);
+
                 if (i == renamingPositions.Count - 1) // the last renaming
-                    sb.Append(Code.Substring(info.endPos, Code.Length - info.endPos));
+                    sb.Append(Code.Substring(info.endPos));
             }
             this.ModifiedCode = sb.ToString();
         }
@@ -875,18 +865,18 @@ namespace csscript
         /// </summary>
         public string ModifiedCode { get; set; } = "";
 
-        List<string> searchDirs = new List<string>();
-        List<string> resFiles = new List<string>();
-        List<string> refAssemblies = new List<string>();
-        List<string> compilerOptions = new List<string>();
-        List<CmdScriptInfo> cmdScripts = new List<CmdScriptInfo>();
-        List<InitInfo> inits = new List<InitInfo>();
-        List<string> nugets = new List<string>();
-        List<string> refNamespaces = new List<string>();
-        List<string> ignoreNamespaces = new List<string>();
-        List<ImportInfo> imports = new List<ImportInfo>();
-        List<string> precompilers = new List<string>();
-        List<string> args = new List<string>();
+        List<string> searchDirs = [];
+        List<string> resFiles = [];
+        List<string> refAssemblies = [];
+        List<string> compilerOptions = [];
+        List<CmdScriptInfo> cmdScripts = [];
+        List<InitInfo> inits = [];
+        List<string> nugets = [];
+        List<string> refNamespaces = [];
+        List<string> ignoreNamespaces = [];
+        List<ImportInfo> imports = [];
+        List<string> precompilers = [];
+        List<string> args = [];
 
         /// <summary>
         /// Enables omitting closing character (";") for CS-Script directives (e.g. "//css_ref
@@ -904,7 +894,7 @@ namespace csscript
 
         string[] GetRawStatements(string codeToAnalyse, string pattern, int endIndex, bool ignoreComments, bool canBeEmpty = false)
         {
-            List<string> retval = new List<string>();
+            List<string> retval = [];
 
             int pos = codeToAnalyse.IndexOf(pattern);
             int endPos = -1;
@@ -957,7 +947,7 @@ namespace csscript
 
         int[] AllRawIndexOf(string pattern, int startIndex, int endIndex) //all raw matches
         {
-            List<int> retval = new List<int>();
+            List<int> retval = [];
 
             int pos = Code.IndexOf(pattern, startIndex, endIndex - startIndex);
             while (pos != -1)
@@ -993,8 +983,8 @@ namespace csscript
 
         internal static string[] SplitByDelimiter(string text, params char[] delimiters)
         {
-            StringBuilder builder = new StringBuilder();
-            List<string> retval = new List<string>();
+            StringBuilder builder = new();
+            List<string> retval = [];
 
             char lastDelimiter = char.MinValue;
 
@@ -1048,7 +1038,7 @@ namespace csscript
                     // need to ensure that double "\n\n" is not treated as escaped delimiter. The
                     // same comes to '\r' and '\t'.
 
-                    if (lastDelimiter == c && !char.IsWhiteSpace(lastDelimiter)) //delimiter was escaped
+                    if (lastDelimiter == c && !lastDelimiter.IsWhiteSpace()) //delimiter was escaped
                         lastDelimiter = char.MinValue;
                     else
                         return i - 1;
@@ -1092,17 +1082,17 @@ namespace csscript
             return false;
         }
 
-        static char[] codeDelimiters = new char[] { ';', '(', ')', '{', };
+        static char[] codeDelimiters = [';', '(', ')', '{',];
 
         bool IsToken(int startPos, int length)
         {
             if (Code.Length < startPos + length) //the rest of the text is too short
                 return false;
 
-            if (startPos != 0 && !(char.IsWhiteSpace(Code[startPos - 1]) || IsOneOf(Code[startPos - 1], codeDelimiters))) //position is not at the start of the token
+            if (startPos != 0 && !(Code[startPos - 1].IsWhiteSpace() || IsOneOf(Code[startPos - 1], codeDelimiters))) //position is not at the start of the token
                 return false;
 
-            if (Code.Length > startPos + length && !(char.IsWhiteSpace(Code[startPos + length]) || IsOneOf(Code[startPos + length], codeDelimiters))) //position is not at the end of the token
+            if (Code.Length > startPos + length && !(Code[startPos + length].IsWhiteSpace() || IsOneOf(Code[startPos + length], codeDelimiters))) //position is not at the end of the token
                 return false;
 
             return true;
@@ -1113,10 +1103,10 @@ namespace csscript
             if (Code.Length < startPos + length) //the rest of the text is too short
                 return false;
 
-            if (startPos != 0 && !char.IsWhiteSpace(Code[startPos - 1])) //position is not at the start of the token
+            if (startPos != 0 && !Code[startPos - 1].IsWhiteSpace()) //position is not at the start of the token
                 return false;
 
-            if (Code.Length > startPos + length && !char.IsWhiteSpace(Code[startPos + length])) //position is not at the end of the token
+            if (Code.Length > startPos + length && !Code[startPos + length].IsWhiteSpace()) //position is not at the end of the token
                 return false;
 
             int endPos = startPos + length;
@@ -1221,11 +1211,11 @@ namespace csscript
         /// //css_include for 'script(today).cs' should escape brackets as they are the directive
         /// delimiters. The correct syntax would be as follows '//css_include script((today)).cs;'</remarks>
         /// </summary>
-        public static char[] DirectiveDelimiters = new char[] { ';', '(', ')', '{', '}', ',' };
+        public static char[] DirectiveDelimiters = [';', '(', ')', '{', '}', ','];
 
         void NoteCommentsAndStrings()
         {
-            List<int> quotationChars = new List<int>();
+            List<int> quotationChars = [];
 
             int startPos;
             int startSLC; //single line comment
@@ -1259,7 +1249,7 @@ namespace csscript
 
                 if (startPos != -1 && endPos != -1)
                 {
-                    int startCode = commentRegions.Count == 0 ? 0 : ((int[])commentRegions[commentRegions.Count - 1])[1] + 1;
+                    int startCode = commentRegions.Count == 0 ? 0 : (commentRegions[commentRegions.Count - 1])[1] + 1;
 
                     int[] quotationIndexes = AllRawIndexOf("\"", startCode, startPos);
                     if ((quotationIndexes.Length % 2) != 0)
@@ -1269,7 +1259,7 @@ namespace csscript
                     }
 
                     //string comment = code.Substring(startPos, endPos - startPos);
-                    commentRegions.Add(new int[2] { startPos, endPos });
+                    commentRegions.Add([startPos, endPos]);
                     quotationChars.AddRange(quotationIndexes);
 
                     searchOffset = endPos + endToken.Length;
@@ -1285,9 +1275,9 @@ namespace csscript
             for (int i = 0; i < quotationChars.Count; i++)
             {
                 if (i + 1 < stringRegions.Count)
-                    stringRegions.Add(new int[] { quotationChars[i], quotationChars[i + 1] });
+                    stringRegions.Add([quotationChars[i], quotationChars[i + 1]]);
                 else
-                    stringRegions.Add(new int[] { quotationChars[i], -1 });
+                    stringRegions.Add([quotationChars[i], -1]);
                 i++;
             }
         }
@@ -1353,7 +1343,7 @@ namespace csscript
 
             if (lastEndPos != 0 && searchOffset < Code.Length)
             {
-                string codeFragment = text.Substring(searchOffset, text.Length - searchOffset);
+                string codeFragment = text.Substring(searchOffset);
                 sb.Append(codeFragment);
             }
             return sb.ToString();

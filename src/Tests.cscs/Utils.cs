@@ -4,14 +4,34 @@ using System.Diagnostics;
 using System.Linq;
 using System.Reflection;
 using static System.Reflection.BindingFlags;
+using Xunit.Sdk;
 
 class FactWinOnlyAttribute : Attribute
 {
 }
 
+// public static class Testing
+// {
+//     public static void SkipIfOutsideIde()
+//     {
+//         if (IsMsTest())
+//             throw SkipException.ForSkip("This test can only be run in Visual Studio");
+//     }
+
+//     public static bool IsMsTest()
+//     {
+//         if (Environment.OSVersion.Platform == PlatformID.Win32NT)
+//         {
+//             // Debugger.Launch();
+//             return Process.GetCurrentProcess().ProcessName == "testhost";
+//         }
+//         return false;
+//     }
+// }
+
 static class Extensions
 {
-    public static string Run(this string exe, string args = null, string dir = null)
+    public static (string output, int exitCode) Run(this string exe, string args = null, string dir = null)
     {
         var process = new Process();
 
@@ -29,6 +49,6 @@ static class Extensions
         output += process.StandardError.ReadToEnd();
         process.WaitForExit();
 
-        return output;
+        return (output, process.ExitCode);
     }
 }

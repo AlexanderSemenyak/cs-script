@@ -17,6 +17,8 @@ namespace CSScripting.CodeDom
     {
         static string csc_asm_file;
 
+        static public bool IsCscDetected => csc_asm_file != null;
+
         static public string csc
         {
             set
@@ -26,6 +28,11 @@ namespace CSScripting.CodeDom
 
             get
             {
+                if (!string.IsNullOrEmpty(csc_asm_file) && !File.Exists(csc_asm_file))
+                {
+                    csc_asm_file = null;
+                }
+
                 if (csc_asm_file == null)
                 {
                     // linux ~dotnet/.../3.0.100-preview5-011568/Roslyn/... (cannot find in preview)
@@ -92,7 +99,7 @@ namespace CSScripting.CodeDom
                     {
                         exitCode = 1;
                         return "Build server output is in unexpected format. The compiler exit code is not available.\n" +
-                               "Try to restart the build server with 'css -server:stop' followed by 'css -server:start'.";
+                            "Try to restart the build server with 'css -server:stop' followed by 'css -server:start'.";
                     }
 
                     exitCode = int.Parse(responseItems[0]);
@@ -107,7 +114,7 @@ namespace CSScripting.CodeDom
             var response = get_response();
 
             var retry = 0;
-            while (response.Contains("SocketException") && retry < 5)
+            while (response.Contains("SocketException") && retry++ < 5)
             {
                 Thread.Sleep(30);
                 response = get_response();
@@ -271,21 +278,6 @@ namespace CSScripting.CodeDom
                 File.Delete(pidFile);
         }
 
-        // public static void KillAllInstances()
-        // {
-        //     if (Directory.Exists(build_server_active_instances))
-        //         foreach (string activeServer in Directory.GetFiles(build_server_active_instances, "*.pid"))
-        //         {
-        //             var proc = GetProcess(int.Parse(Path.GetFileNameWithoutExtension(activeServer)));
-        //             try
-        //             {
-        //                 proc?.Kill();
-        //                 File.Delete(activeServer);
-        //             }
-        //             catch { }
-        //         }
-        // }
-
         public static void ListenToRequests(int? port)
         {
             var serverSocket = new TcpListener(IPAddress.Loopback, port ?? serverPort);
@@ -386,7 +378,13 @@ namespace CSScripting.CodeDom
                 }
                 catch (Exception e)
                 {
-                    return $"1|Build server error: {e}";
+                    var errorMessage = $"1|Build server error: {e}";
+                    if (e is FileNotFoundException notFoundException && notFoundException.FileName?.EndsWith("csc.dll") == true
+                        && BuildServer.IsCscDetected)
+                    {
+                        errorMessage += Environment.NewLine + "If you updated .NET SDK you may need to restart the build server with `css -serever:restart`";
+                    }
+                    return errorMessage;
                 }
                 finally
                 {

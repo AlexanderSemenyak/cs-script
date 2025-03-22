@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using static System.Environment;
 using System.IO;
@@ -19,6 +20,10 @@ namespace cscs
         [STAThread]
         static int Main(string[] args)
         {
+#if DEBUG
+            // Environment.SetEnvironmentVariable("CSS_RESTORE_NUGET_PACKAGES", "true");
+            // Environment.SetEnvironmentVariable("CSSCRIPT_NUGET_PACKAGES", @"D:\temp\nuget");
+#endif
             try
             {
                 try { SetEnvironmentVariable("Console.WindowWidth", Console.WindowWidth.ToString()); } catch { }
@@ -44,11 +49,12 @@ namespace cscs
                     else if (serverCommand == "-server:reset") Globals.ResetBuildServer();
                     else if (serverCommand == "-server:add") Globals.DeployBuildServer();
                     else if (serverCommand == "-server:remove") Globals.RemoveBuildServer();
-                    else if (serverCommand == "-servers:start") { CSScripting.Roslyn.BuildServer.Start(); Globals.StartBuildServer(); }
+                    else if (serverCommand == "-servers:start") { Globals.StartRoslynBuildServer(); Globals.StartBuildServer(); }
                     else if (serverCommand == "-servers:stop") { CSScripting.Roslyn.BuildServer.Stop(); Globals.StopBuildServer(); }
-                    else if (serverCommand == "-kill") { CSScripting.Roslyn.BuildServer.Stop(); Globals.StopBuildServer(); }
-                    else if (serverCommand == "-server_r:start") CSScripting.Roslyn.BuildServer.Start();
+                    else if (serverCommand == "-kill") { CSScripting.Roslyn.BuildServer.Stop(); Globals.StopBuildServer(); CSExecutor.Command("list", "kill", "*"); }
+                    else if (serverCommand == "-server_r:start") Globals.StartRoslynBuildServer();
                     else if (serverCommand == "-server_r:stop") CSScripting.Roslyn.BuildServer.Stop();
+                    else if (serverCommand == "-server_r:start_inproc") CSScripting.Roslyn.BuildServer.Start(); // this command is invisible for users and only used to allow async start of teh server
                     else Globals.PrintBuildServerInfo();
                 }
                 else if (OSVersion.Platform == PlatformID.Win32NT && installCommand.HasText() && !args.Any(x => x == "?"))

@@ -4,6 +4,7 @@ using System.Diagnostics;
 using static System.Environment;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using System.Xml.Linq;
 using Microsoft.CodeAnalysis.Scripting;
@@ -26,7 +27,9 @@ namespace csscript
     // REST API (e.g. https://api-v2v3search-0.nuget.org/query?q=cs-script&prerelease=false)
     class NuGet
     {
-        static NuGetCore nuget = new NuGetCore();
+        // static NuGetCore nuget = new();
+
+        internal static string RestoreMarker = "Restoring packages...";
 
         static public string NuGetCacheView => Directory.Exists(NuGetCache) ? NuGetCache : "<not found>";
         static public string NuGetCache => CSExecutor.options.legacyNugetSupport ? NuGetCore.NuGetCache : NuGetNewAlgorithm.NuGetCache;
@@ -74,7 +77,7 @@ namespace csscript
             {
                 var all_packages = ListPackages();
                 if (0 < index && index <= all_packages.Count())
-                    packages = new string[] { all_packages[index - 1] };
+                    packages = [all_packages[index - 1]];
                 else
                     Console.WriteLine("There is no package with the specified index");
             }
@@ -83,10 +86,10 @@ namespace csscript
                 // Regex is too much at this stage string pattern =
                 // CSSUtils.ConvertSimpleExpToRegExp(); Regex wildcard = new Regex(pattern, RegexOptions.IgnoreCase);
 
-                if (packageNameMask.EndsWith("*"))
+                if (packageNameMask.EndsWith('*'))
                     packages = ListPackages().Where(x => x.StartsWith(packageNameMask.Substring(0, packageNameMask.Length - 1))).ToArray();
                 else
-                    packages = new[] { packageNameMask };
+                    packages = [packageNameMask];
             }
 
             // C:\Users\user\AppData\Local\Temp\csscript.core\.nuget\333
@@ -179,7 +182,7 @@ namespace csscript
 
                     dependencyPackages = GetCompatibleTargetFramework(frameworkGroups, item)
                                              ?.FindDescendants("dependency")
-                                             ?? new XElement[0];
+                                             ?? [];
                 }
                 else
                     dependencyPackages = dependenciesSection.FindDescendants("dependency");
@@ -309,7 +312,7 @@ namespace csscript
                                 .Where(x => Utils.IsRuntimeCompatibleAsm(x))
                                 .ToArray();
             else
-                return new string[0];
+                return [];
         }
 
         static public string[] ListPackages()
@@ -382,14 +385,14 @@ namespace csscript
                                                       }));
 
             bool promptPrinted = false;
-            foreach (string item in packages.Concat(allPackages))
+            foreach (string item in allPackages)
             {
                 // //css_nuget -noref -ng:"-IncludePrerelease version 1.0beta" cs-script
                 // //css_nuget -noref -ver:"4.1.0-alpha1" -ng:"-Pre" NLog
 
                 string[] packageArgs = item.SplitCommandLine();
 
-                string package = packageArgs.FirstOrDefault(x => !x.StartsWith("-"));
+                string package = packageArgs.FirstOrDefault(x => !x.StartsWith('-'));
 
                 bool suppressReferencing = packageArgs.Contains("-noref");
                 string nugetArgs = packageArgs.ArgValue("-ng");
@@ -481,47 +484,110 @@ namespace csscript
                                                     package += $" -ver:\"{n.Attribute("version").Value}\"";
                                                 return package;
                                             }));
-            return packages.ToArray();
+            return [.. packages];
         }
 
         public static string[] FindAssembliesOf(string[] packages, bool suppressDownloading, string script)
         {
             if (packages.IsEmpty())
-                return new string[0];
+                return [];
 
             var allPackages = packages.Concat(GetPackagesFromConfigFileOfScript(script));
 
             var forceRestore = Environment.GetEnvironmentVariable("CSS_RESTORE_NUGET_PACKAGES") != null;
+            if (packages.Any(x => x.SplitCommandLine().Any(arg => arg.StartsWith("-force"))))
+                forceRestore = true;
+
             var packagesId = $"// packages: {allPackages.OrderBy(x => x).JoinBy(", ")}";
 
-            var assembliesList = CSExecutor.GetCacheDirectory(script).PathJoin(script + ".nuget.cs");
+            var assembliesList = CSExecutor.GetCacheDirectory(script).PathJoin(script.GetFileName() + ".nuget.cs");
 
             string[] assemblies;
             if (!forceRestore && File.Exists(assembliesList))
             {
                 var lines = File.ReadAllLines(assembliesList);
                 if (lines.FirstOrDefault() == packagesId)
-                    return lines.Skip(1).Select(x => x.Replace("//css_ref ", "")).ToArray();
+                {
+                    // assembliesList file is only ever used here and it is not used for anything else
+                    // //css_dir is only used as a convenient prefix
+                    var pathFolders = lines
+                        .Where(x => x.StartsWith("//css_dir "))
+                        .Select(x => x.Replace("//css_dir ", ""));
+
+                    foreach (string dir in pathFolders)
+                        CSExecutor.options.AddSearchDir(dir.Trim(), Settings.code_dirs_section);
+
+                    var refs = lines
+                        .Where(x => x.StartsWith("//css_ref "))
+                        .Select(x => x.Replace("//css_ref ", ""))
+                        .ToArray();
+
+                    if (refs.All(File.Exists))
+                        return refs;
+                }
             }
 
-            assemblies = FindAssembliesOf(allPackages);
+            (assemblies, var nativeAssetsFolders) = FindAssembliesOf(allPackages);
 
             File.WriteAllText(assembliesList, packagesId + NewLine);
             File.AppendAllLines(assembliesList, assemblies.Select(x => "//css_ref " + x));
+            if (nativeAssetsFolders.Any())
+            {
+                foreach (string dir in nativeAssetsFolders)
+                    CSExecutor.options.AddSearchDir(dir.Trim(), Settings.code_dirs_section);
 
+                File.AppendAllLines(assembliesList, nativeAssetsFolders.Select(x => "//css_dir " + x));
+            }
             return assemblies;
         }
 
         public static string NuGetCache => GetEnvironmentVariable("CSSCRIPT_NUGET_PACKAGES") ??
                                            SpecialFolder.UserProfile.GetPath(".nuget", "packages");
 
-        public static string[] FindAssembliesOf(IEnumerable<string> packages)
+        internal static string[] GetPackageNativeDllsFolders(string packageDir)
+        {
+            //
+            // C:\Users\user\AppData\Local\Temp\csscript.core\nuget\16b5531e-8d0d-43fc-aaed-af5eac79ca04
+            // C:\Users\user\AppData\Local\Temp\csscript.core\nuget\16b5531e-8d0d-43fc-aaed-af5eac79ca04\publish\runtimes\win-x64\native\libSkiaSharp.dll
+
+            var runtimeFolder = packageDir.PathJoin("runtimes", Runtime.RID, "native");
+            var sw = Stopwatch.StartNew();
+            if (runtimeFolder.DirExists())
+            {
+                var result = new List<string>();
+                foreach (var file in Directory.GetFiles(runtimeFolder))
+                {
+                    var expectedSize = new FileInfo(file).Length;
+
+                    var pattern = file.GetFileName();
+                    var matchingFileNames = Directory.GetFiles(NuGetCache, pattern, SearchOption.AllDirectories);
+                    foreach (var matchingFileName in matchingFileNames.Where(x => x.Contains(Runtime.RID)))
+                    {
+                        if (expectedSize == new FileInfo(matchingFileName).Length)
+                        {
+                            // if(isSameData(refAssemblyBytes, File.ReadAllBytes(f)))
+                            {
+                                result.Add(matchingFileName.GetDirName());
+                                break;
+                            }
+                        }
+                    }
+                }
+                sw.Stop();
+                return result.ToArray();
+            }
+            return [];
+        }
+
+        public static (string[] assemblies, string[] nativeAssetsDirs) FindAssembliesOf(IEnumerable<string> packages)
         {
             // TODO
             // - create a project template based on "dotnet new classlib" output
             // - analyse only directories that are listed in `*.nuget.cache` file (e.g. test\obj\project.nuget.cache)
 
             var result = new List<string>();
+            var nativeAssetsDirs = new string[0];
+
             var projId = Guid.NewGuid().ToString();
             var projectDir = SpecialFolder.LocalApplicationData.GetPath("Temp", "csscript.core", "nuget", projId);
             Directory.CreateDirectory(projectDir);
@@ -531,7 +597,7 @@ namespace csscript
             foreach (var item in packages)
             {
                 string[] packageArgs = item.SplitCommandLine();
-                string package = packageArgs.FirstOrDefault(x => !x.StartsWith("-"));
+                string package = packageArgs.FirstOrDefault(x => !x.StartsWith('-'));
 
                 restoreArgs += packageArgs.ArgValue("-ng") + " "; // temp, until `-ng` is dropped
                 restoreArgs += packageArgs.ArgValue("-restore") + " ";
@@ -541,18 +607,26 @@ namespace csscript
                 packagsSection += $"<PackageReference Include=\"{package}\" Version=\"{packageVersion}\"/> {NewLine}";
             }
 
+            restoreArgs += $" --packages \"{NuGetCache}\"";
+
+            (int exitCode, string output) dotnet_run(string args)
+            {
+                var p = new Process();
+                p.StartInfo.FileName = "dotnet";
+                p.StartInfo.Arguments = args;
+                p.StartInfo.WorkingDirectory = projectDir;
+                p.StartInfo.RedirectStandardOutput = true;
+                p.Start();
+                p.WaitForExit();
+                return (p.ExitCode, p.StandardOutput.ReadToEnd());
+            }
+
             try
             {
                 // var projectFile = projectDir.PathJoin("nuget.ref.csproj");
                 var projectFile = projectDir.PathJoin($"{projId}.csproj");
 
-                var p1 = new Process();
-                p1.StartInfo.FileName = "dotnet";
-                p1.StartInfo.Arguments = "new classlib";
-                p1.StartInfo.WorkingDirectory = projectDir;
-                p1.StartInfo.RedirectStandardOutput = true;
-                p1.Start();
-                p1.WaitForExit();
+                dotnet_run("new classlib");
 
                 var projContent = File.ReadAllText(projectDir.PathJoin($"{projId}.csproj"))
                     .Replace("</Project>", $@"<ItemGroup>
@@ -565,25 +639,22 @@ namespace csscript
                 packages = packages.OrderBy(x => x).ToArray();
 
                 var sw = Stopwatch.StartNew();
-                Console.WriteLine("Restoring packages...");
-                // Console.WriteLine(packages.JoinBy(NewLine));
+                Console.WriteLine(NuGet.RestoreMarker);
+                Console.WriteLine("   " + packages.JoinBy(NewLine + "   "));
 
-                var p = new Process();
-                p.StartInfo.FileName = "dotnet";
-                p.StartInfo.Arguments = "restore " + restoreArgs.Trim();
-                p.StartInfo.WorkingDirectory = projectDir;
-                p.StartInfo.RedirectStandardOutput = true;
-                p.Start();
-                p.WaitForExit();
+                var restore = dotnet_run("restore " + restoreArgs.Trim());
+                if (restore.exitCode != 0)
+                {
+                    Console.WriteLine(restore.output);
+                    throw new ApplicationException($"Package restoring failed.");
+                }
 
-                p = new Process();
-                p.StartInfo.FileName = "dotnet";
-                p.StartInfo.Arguments = "publish --no-restore -o ./publish";
-                p.StartInfo.WorkingDirectory = projectDir;
-                p.StartInfo.RedirectStandardOutput = true;
-                p.Start();
-                p.WaitForExit();
-
+                var publish = dotnet_run("publish --no-restore -o ./publish");
+                if (publish.exitCode != 0)
+                {
+                    Console.WriteLine(publish.output);
+                    throw new ApplicationException($"Package restoring failed.");
+                }
                 var allRefAssemblies = Directory.GetFiles(Path.Combine(projectDir, "publish"), "*.dll")
                                            .Concat(
                                        Directory.GetFiles(Path.Combine(projectDir, "publish"), "*.exe"))
@@ -631,13 +702,16 @@ namespace csscript
                     result.Add(assembly);
                 }
                 // Console.WriteLine("    " + sw.Elapsed.ToString());
+                nativeAssetsDirs = GetPackageNativeDllsFolders(Path.Combine(projectDir, "publish"));
             }
             finally
             {
-                try { Directory.Delete(projectDir, true); }
-                catch { }
+                if (GetEnvironmentVariable("CSS_RESTORE_DONOT_CLEAN") == null)
+                    try { Directory.Delete(projectDir, true); }
+                    catch { }
             }
-            return result.ToArray();
+
+            return (result.ToArray(), nativeAssetsDirs);
         }
     }
 }

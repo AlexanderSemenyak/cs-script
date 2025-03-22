@@ -12,10 +12,14 @@ using System.Runtime.ConstrainedExecution;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics.X86;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
+using System.Xml.Linq;
 using Microsoft.CodeAnalysis.Scripting;
 using CSScripting;
+using static CSScripting.CSSUtils;
 
 namespace csscript
 {
@@ -31,6 +35,8 @@ namespace csscript
         public const string question2 = "-?";
         public const string wpf = "wpf";
         public const string cmd = "cmd";
+        public const string ls = "ls";
+        public const string list = "list";
         public const string syntax = "syntax";
         public const string server = "server";
         public const string install = "install";
@@ -90,12 +96,42 @@ namespace csscript
 
         internal const string proj_dbg = "proj:dbg";    // for internal use only
         internal const string proj_csproj = "proj:csproj";    // for internal use only
-        static public string SyntaxHelp { get { return syntaxHelp.ToConsoleLines(0); } }
-        static string syntaxHelp = "";
+        static public string SyntaxHelp { get { return syntaxHelp.ToConsoleLines(0).Replace("&#96;", "`"); } }
 
-        static public Dictionary<string, ArgInfo> switch1Help = new Dictionary<string, ArgInfo>();
-        static public Dictionary<string, ArgInfo> switch2Help = new Dictionary<string, ArgInfo>();
-        static public Dictionary<string, ArgInfo> miscHelp = new Dictionary<string, ArgInfo>();
+        static public string SyntaxHelpMd
+        {
+            get
+            {
+                var lines = syntaxHelp.ToConsoleLines(0, 300).GetLines();
+                return lines
+                    .Select(x =>
+                    {
+                        if (x.Replace(AppArgs.section_sep, "").TrimEnd() == "")
+                            return "";
+
+                        if (x.StartsWith("`//css_"))
+                        {
+                            var parts = x.Split(' ');
+
+                            return $"---{NewLine}{NewLine}### Directive {parts[0]}`{NewLine}{NewLine}{x}";
+                        }
+
+                        if (x.Replace("*", "").Trim() == "") // "********************"
+                            return "";
+
+                        if (x.StartsWith("CS-Script specific syntax"))
+                            return $"# {x}{NewLine}{NewLine}---";
+                        return x;
+                    })
+                    .JoinBy(NewLine).Replace("\r\n\r\n\r\n", "\r\n\r\n");
+            }
+        }
+
+        internal static string syntaxHelp = "";
+
+        static public Dictionary<string, ArgInfo> switch1Help = [];
+        static public Dictionary<string, ArgInfo> switch2Help = [];
+        static public Dictionary<string, ArgInfo> miscHelp = [];
 
         static public bool IsHelpRequest(this string arg)
             => arg.IsOneOf(AppArgs.help, AppArgs.question, AppArgs.help2, AppArgs.help3, AppArgs.question2);
@@ -105,7 +141,7 @@ namespace csscript
             var rawArg = arg;
             var normalizedArg = arg;
 
-            if (arg.StartsWith("-"))
+            if (arg.StartsWith('-'))
                 normalizedArg = arg.Substring(1);
 
             return AppArgs.switch1Help.ContainsKey(rawArg) ||
@@ -229,7 +265,9 @@ namespace csscript
                                          "Note this switch will force the use of `dotnet` compiler as `csc` is not capable of building " +
                                          "executable assemblies. Thus `//css_engine` and `-engine` options will always be ignored.");
             switch1Help[ew] = new ArgInfo("-ew",
-                                          "Compiles script into Windows application executable (applicable only on Windows).");
+                                          "Compiles script into Windows application executable (applicable only on Windows).",
+                                          "Note this switch will force the use of `dotnet` compiler as `csc` is not capable of building " +
+                                          "executable assemblies. Thus `//css_engine` and `-engine` options will always be ignored.");
             switch1Help[rx] = new ArgInfo($"-{rx}",
                                           "Run script as an external process. This option is incompatible with VB scripts.",
                                           "This mode allows execution of the scripts that are otherwise incompatible with the runtime " +
@@ -241,13 +279,13 @@ namespace csscript
                                           "   The compiled script is executed directly as exe(e.g. `script.exe`).",
                                           " - `roslyn` ",
                                           "   This mode is not supported as Roslyn scripts do not support `static main`.");
-            switch1Help[ew] = new ArgInfo("-c[:<0|1>]",
-                                          "Executes compiled script cache (e.g. <cache dir>/script.cs.dll) if found.",
-                                          "This command improves performance by avoiding compiling the script if it was not changed since last execution.",
-                                          "```",
-                                          "   -c:1|-c  - enable caching",
-                                          "   -c:0     - disable caching (which might be enabled globally)",
-                                          "```");
+            switch1Help[c] = new ArgInfo("-c[:<0|1>]",
+                                         "Executes compiled script cache (e.g. <cache dir>/script.cs.dll) if found.",
+                                         "This command improves performance by avoiding compiling the script if it was not changed since last execution.",
+                                         "```",
+                                         "   -c:1|-c  - enable caching",
+                                         "   -c:0     - disable caching (which might be enabled globally)",
+                                         "```");
             switch1Help[ca] = new ArgInfo("-ca",
                                           "Compiles script file into cache file (e.g. <cache dir>/script.cs.dll).");
             switch1Help[cd] = new ArgInfo("-cd",
@@ -265,7 +303,7 @@ namespace csscript
                                               "You can let CS-Script to detect installed Visual Studio executable and interactively select " +
                                               "the detected executable for integrating it with CS-Script by using `-vs:init` option.",
                                               "Alternatively, you can even ask to integrate the first detected executable with: ",
-                                              "      " + AppInfo.appName + " -vs:init 0");
+                                              "      " + AppInfo.AppName + " -vs:init 0");
             switch1Help[vscode] = new ArgInfo("-vscode",
                                           "Generates .NET project file and opens it in Visual Studio Code.",
                                               "The path to the Visual Studio Code executable (code.exe) needs to be defined in the " +
@@ -281,12 +319,12 @@ namespace csscript
             switch1Help[co] = new ArgInfo("-co:<options>",
                                           "Passes compiler options directly to the language compiler (e.g. csc.exe or dotnet.exe).",
                                           "Note, some compiler options may not be compatible if they are passed to the wrong compiler " +
-                                          "executable (see compiler documentation). Though the fundamental switches like `/platform:*` are converted by CS-Script" +
-                                          "int compatible version between csc.exe and dotnet.exe.",
+                                          "executable (see compiler documentation). Though the fundamental switches like `/platform:*` are converted by CS-Script " +
+                                          "into compatible version between csc.exe and dotnet.exe.",
                                               "(e.g.  `-co:/d:TRACE` pass `/d:TRACE` option to C# compiler",
                                               " or    `-co:/platform:x86` to produce Win32 executable)");
             switch1Help[engine] =
-            switch1Help[ng] = new ArgInfo("-ng|-engine:<csc|dotnet|roslyn>]",
+            switch1Help[ng] = new ArgInfo("-ng|-engine:<csc|dotnet|roslyn>",
                                           "Forces compilation to be done by one of the supported .NET engines.",
                                           "  ",
                                           "`dotnet` - ${<==}dotnet.exe compiler; this is the most versatile compilation engine though " +
@@ -307,9 +345,9 @@ namespace csscript
                                           "  ",
                                           "`roslyn` - ${<==}Microsoft.CodeAnalysis.CSharp.Scripting.dll compiler; this is the most portable compilation " +
                                           "engine. It does not require .NET SDK being installed. Though it does have limitations (see documentation).",
-                                          "           ${<==}The compilation is performed in the separate child process " + AppInfo.appName + " (another " +
+                                          "           ${<==}The compilation is performed in the separate child process " + AppInfo.AppName + " (another " +
                                           "instance of script engine) which is somewhat equivalent of VBCSCompiler.exe (build server) from .NET toolset.",
-                                          "           ${<==}CS-Script communicates with " + AppInfo.appName + " build server via socket (default port 17002). " +
+                                          "           ${<==}CS-Script communicates with " + AppInfo.AppName + " build server via socket (default port 17002). " +
                                           "You can control port value " +
                                           "via the environment variable 'CSS_BUILDSERVER_ROSLYN_PORT'",
                                           "           ${<==}Value `roslyn-inproc` will suppress spinning off an external process and Roslyn compiler will be " +
@@ -317,15 +355,15 @@ namespace csscript
                                           "undesirable for whatever reason. Though in this case performance will be effected on the first run of the script.",
                                           "  ",
                                           "```",
-                                          "(e.g. " + AppInfo.appName + " -engine:dotnet sample.cs",
-                                          "      " + AppInfo.appName + " -ng:csc sample.cs)",
-                                          "      " + AppInfo.appName + " -ng:roslyn-inproc sample.cs)",
-                                          "      " + AppInfo.appName + " -ng:roslyn sample.cs)",
+                                          "(e.g. " + AppInfo.AppName + " -engine:dotnet sample.cs",
+                                          "      " + AppInfo.AppName + " -ng:csc sample.cs",
+                                          "      " + AppInfo.AppName + " -ng:roslyn-inproc sample.cs",
+                                          "      " + AppInfo.AppName + " -ng:roslyn sample.cs)",
                                           "```");
             switch1Help[sample] =
             switch1Help[s] = new ArgInfo("-s|-sample[:<C# version>]",
                                          " -s:7    - prints C# 7+ sample. Otherwise, it prints the default canonical 'Hello World' sample.",
-                                         "(e.g. " + AppInfo.appName + " -s:7 > sample.cs).");
+                                         "(e.g. " + AppInfo.AppName + " -s:7 > sample.cs).");
 
             switch1Help[@new] = new ArgInfo("-new[:<type>] [<script name>]",
                                             "Creates a new script.",
@@ -336,10 +374,10 @@ namespace csscript
                                                 "Sample:",
                                                     " ",
                                                     "```",
-                                                    AppInfo.appName + " -code \"Console.WriteLine(Environment.UserDomainName);#n" +
+                                                    AppInfo.AppName + " -code \"Console.WriteLine(Environment.UserDomainName);#n" +
                                                     "Console.WriteLine(#''%USERNAME%#'');\"",
-                                                    AppInfo.appName + " -code \"using System.Linq;#nSystem.Diagnostics.Process.GetProcessesByName(''notepad'').ToList().ForEach(x => x.Kill());\"",
-                                                    AppInfo.appName + " -code \"SetEnvironmentVariable(`ntp`,`notepad.exe`, EnvironmentVariableTarget.Machine)\"",
+                                                    AppInfo.AppName + " -code \"using System.Linq;#nSystem.Diagnostics.Process.GetProcessesByName(''notepad'').ToList().ForEach(x => x.Kill());\"",
+                                                    AppInfo.AppName + " -code \"SetEnvironmentVariable(`ntp`,`notepad.exe`, EnvironmentVariableTarget.Machine)\"",
                                                     "```",
                                                     " ",
                                                     "The -code argument must be the last argument in the command. The only argument that is allowed " +
@@ -360,9 +398,9 @@ namespace csscript
                                                     "#r        ->    <\\r>",
                                                     "#''       ->    \"   ",
                                                     "''        ->    \"   ",
-                                                    "#``       ->    \"   ",
-                                                    "`n        ->    <\\n>",
-                                                    "`r        ->    <\\r>",
+                                                    "#``         ->    \"   ",
+                                                    "`n         ->    <\\n>",
+                                                    "`r         ->    <\\r>",
                                                     "``        ->    \"   ",
                                                     "```"
                                            );
@@ -391,7 +429,7 @@ namespace csscript
                                                      " ",
                                                      "    void Main()",
                                                      "    {",
-                                                     "        Console.WriteLine(\"Hello World!\";",
+                                                     "        Console.WriteLine(\"Hello World!\");",
                                                      "    }",
                                                      " ",
                                                      "```",
@@ -546,23 +584,23 @@ namespace csscript
                                                   "Note: The property name in -config:set and -config:set is case insensitive and can also contain '_' " +
                                                   "as a token separator that is ignored during property lookup.",
                                                   "```",
-                                                  "(e.g. " + AppInfo.appName + " -config:none sample.cs",
-                                                  "${<=6}" + AppInfo.appName + " -config:default > css_VB.xml",
+                                                  "(e.g. " + AppInfo.AppName + " -config:none sample.cs",
+                                                  "${<=6}" + AppInfo.AppName + " -config:default > css_VB.xml",
 
                                                   // "${<=6}" + AppInfo.appName + " -config:set:" +
                                                   // inmem + "=true", // may need to resurrect if
                                                   // users do miss it :)
 
-                                                  "${<=6}" + AppInfo.appName + " -config:set:DefaultCompilerEngine=dotnet",
-                                                  "${<=6}" + AppInfo.appName + " -config:set:DefaultArguments=add:-ac",
-                                                  "${<=6}" + AppInfo.appName + " -config:set:default_arguments=del:-ac",
-                                                  "${<=6}" + AppInfo.appName + " -config:c:\\cs-script\\css_VB.xml sample.vb)",
+                                                  "${<=6}" + AppInfo.AppName + " -config:set:DefaultCompilerEngine=dotnet",
+                                                  "${<=6}" + AppInfo.AppName + " -config:set:DefaultArguments=add:-ac",
+                                                  "${<=6}" + AppInfo.AppName + " -config:set:default_arguments=del:-ac",
+                                                  "${<=6}" + AppInfo.AppName + " -config:c:\\cs-script\\css_VB.xml sample.vb)",
                                                   "```");
 
             switch2Help[@out] = new ArgInfo("-out[:<file>]",
                                             "Forces the script to be compiled into a specific location.",
                                                 "Used only for very fine hosting tuning.",
-                                                    "(e.g. " + AppInfo.appName + " -out:%temp%\\%pid%\\sample.dll sample.cs");
+                                                    "(e.g. " + AppInfo.AppName + " -out:%temp%\\%pid%\\sample.dll sample.cs");
             // .NET core does not support custom app.config switch2Help[sconfig] = new
             // ArgInfo("-sconfig[:<file>|none]", "Uses custom config file as a .NET app.config.",
             // "This option might be useful for running scripts, which usually cannot be executed
@@ -575,18 +613,18 @@ namespace csscript
             switch2Help[r] = new ArgInfo("-r:<assembly 1>,<assembly N>",
                                          "Uses explicitly referenced assembly.", "It is required only for " +
                                              "rare cases when namespace cannot be resolved into assembly.",
-                                                 "(e.g. `" + AppInfo.appName + " /r:myLib.dll myScript.cs`).");
+                                         "(e.g. `" + AppInfo.AppName + " /r:myLib.dll myScript.cs`).");
 
             switch2Help[dir] = new ArgInfo("-dir:<directory 1>,<directory N>",
                                            "Adds path(s) to the assembly probing directory list.",
                                                "You can use the reserved word 'show' as a directory name to print the configured probing directories.",
-                                                   "(e.g. `" + AppInfo.appName + " -dir:C:\\MyLibraries myScript.cs; " + AppInfo.appName + " -dir:show`).");
+                                           "(e.g. `" + AppInfo.AppName + " -dir:C:\\MyLibraries myScript.cs; " + AppInfo.AppName + " -dir:show`).");
             switch2Help[pc] =
             switch2Help[precompiler] = new ArgInfo("-precompiler[:<file 1>,<file N>]",
                                                    "Specifies custom precompiler. This can be either script or assembly file.",
                                                    alias_prefix + "pc[:<file 1>,<file N>]",
                                                    "If no file(s) specified prints the code template for the custom precompiler. The special value 'print' has " +
-                                                   "the same effect (e.g. " + AppInfo.appName + " -pc:print).",
+                                                   "the same effect (e.g. " + AppInfo.AppName + " -pc:print).",
                                                    "There is a special reserved word '" + CSSUtils.noDefaultPrecompilerSwitch + "' to be used as a file name. " +
                                                    "It instructs script engine to prevent loading any built-in precompilers " +
                                                    "like the one for removing shebang before the execution.",
@@ -602,37 +640,50 @@ namespace csscript
                                                     "if it is found in the same folder where the script engine is. Automatic CSSRoslynProvider.dll " +
                                                     "loading can be disabled with a special 'none' argument: -pvdr:none.",
                                                     $"(see {help_url}/help/non_cs_compilers.html)");
-            switch2Help[nuget] = new ArgInfo("-nuget[:<package|restore>]",
-                                             "Note: A new NuGet support available from version 4.7.0 will obsolete some of the options of this command",
-                                             "      New NuGet support can be enabled by setting `LegacyNugetSupport` option to false with `css -config:set:LegacyNugetSupport=false`)",
-                                             "      Read more: https://github.com/oleg-shilo/cs-script/wiki/NuGet-Support",
+            switch2Help[nuget] = new ArgInfo("-nuget[:restore]",
+                                             "Installs new or updates existing NuGet packages. It is a very close equivalent of `dotnet restore` command",
+                                             "```",
+                                             " -nuget         - ${<==}prints the list of all root packages in the repository",
+                                             " -nuget:restore - ${<==}Downloads and installs all packages specified in the script without executing the script. " +
+                                             "Effectively it is an equivalent of -check but with the forced nuget packages restore operation.",
+                                             "                  ${<==}Using this option is an alternative to having '//css_nuget -force ...' directive in the script code as it may be " +
+                                             "a more convenient way of updating packages manually instead of having them updated on every script execution/recompilation.",
+                                             "                  ${<==}You can set CSS_RESTORE_DONOT_CLEAN environment variable to disable removing temporary folders created during restore operations. This can be useful for troubleshooting NuGet packages restoring." +
+                                             "```",
+                                             "---------------------------------------------",
+                                             "Note: A the current NuGet support model is available since v4.7.0. The old options of this `-nuget` command that " +
+                                             "are only available with the legacy NuGet support algorithm. This mode can be enabled by setting `LegacyNugetSupport` option to false: " +
+                                             "`css -config:set:LegacyNugetSupport=true`. Read more: https://github.com/oleg-shilo/cs-script/wiki/NuGet-Support",
                                              " ",
-                                             "Imports new or updates existing NuGet package.",
-                                                 "This command allows light management of the NuGet packages in the CS-Script local package repository (%PROGRAMDATA%\\CS-Script\\nuget).",
-                                                     "The tasks are limited to installing, updating and listing the local packages.",
-                                                     " ",
-                                                     "```",
-                                                     " -nuget           - ${<==}prints the list of all root packages in the repository",
-                                                     "                    ${<==}(Not available with new NuGet support)",
-                                                     " -nuget:<package> - ${<==}downloads and installs the latest version of the package(s). ",
-                                                     "                    ${<==}Wild cards can be used to update multiple packages. For example '-nuget:ServiceStack*' will update all " +
-                                                     "already installed ServiceStack packages.",
-                                                     "                    ${<==}You can also use the index of the package instead of its full name.",
-                                                     "                    ${<==}(Not available with new NuGet support)",
-                                                     "```",
-                                                     " ",
-                                                     "Installing packages this way is an alternative to having '//css_nuget -force ...' directive in the script code as it may be " +
-                                                     "more convenient for the user to update packages manually instead of having them updated on every script execution/recompilation.",
-                                                     "```",
-                                                     " -nuget:restore - ${<==}downloads and installs all packages specified in the script without executing the script. " +
-                                                     "```",
-                                                     "Available only with new NuGet support."
+                                             "Legacy CLI:",
+                                             " ",
+                                             "-nuget[:<package|restore>]",
+                                             "This command allows a lightweight management of the NuGet packages. The functionality is limited to installing, restoring and updating the packages.",
+                                             "```",
+                                             " -nuget           - ${<==}prints the list of all root packages in the repository",
+                                             " -nuget:<package> - ${<==}downloads and installs the latest version of the package(s). ",
+                                             "                    ${<==}Wild cards can be used to update multiple packages. For example '-nuget:ServiceStack*' will update all " +
+                                             "already installed ServiceStack packages.",
+                                             "                    ${<==}You can also use the index of the package instead of its full name.",
+                                             "                    ${<==}(Not available with new NuGet support)",
+                                             " -nuget:restore   - ${<==}Downloads and installs all packages specified in the script without executing the script.",
+                                             "```"
                                             );
             switch2Help[syntax] = new ArgInfo("-syntax",
                                               "Prints documentation for CS-Script specific C# syntax.");
             switch2Help[commands] =
-            switch2Help[cmd] = new ArgInfo("-commands|-cmd",
-                                           "Prints list of supported commands (arguments) as well as the custom commands defined by user.");
+            switch2Help[cmd] = new ArgInfo("-commands|-cmd[:x]",
+                                           "Prints list of supported commands (arguments) as well as the custom commands defined by user.",
+                                           "-cmd:x - ${<==}Prints detailed information of the custom commands defined by user.");
+            switch2Help[ls] =
+            switch2Help[list] = new ArgInfo("-list|-ls [<kill|k> | <kill-all|ka>",
+                                            "Prints list of all currently running scripts.",
+                                            "If script execution tracking is undesirable you can disable it by setting " +
+                                           $"{Runtime.DisableCSScriptProcessTrackingEnvar} environment variable to a non empty value.",
+                                            " kill|k      - ${<==}Allow user to select and terminate any running script.",
+                                            " *           - ${<==}Terminate all running scripts when 'kill' option is used.",
+                                            "               ${<==}(e.g. " + AppInfo.AppName + " -list kill * ).");
+
             miscHelp["file"] = new ArgInfo("file",
                                            "Specifies name of a script file to be run.");
             miscHelp["params"] = new ArgInfo("params",
@@ -644,7 +695,7 @@ namespace csscript
 
             syntaxHelp = fromLines(
                          "**************************************",
-                         "Script specific syntax",
+                         "CS-Script specific syntax",
                          "**************************************",
                          " ",
                          "Engine directives:",
@@ -652,24 +703,32 @@ namespace csscript
                          section_sep, //------------------------------------
                          "Engine directives can be controlled (enabled/disabled) with compiler conditional symbols " +
                          "and environment variables via the inline `#if` syntax:",
+                         " ",
+                         "```C#",
                          "  //css_include #if DEBUG debug_utils.cs",
                          "  //css_dir #if (DEBUG) .\\bin\\Debug",
                          "  //css_reference #if PRODUCTION_PC d:\\temp\\build\\certificates.dll",
+                         "```",
                          section_sep, //------------------------------------
                          "The script engine also always defines special compiler conditional symbol `CS_SCRIPT`:",
+                         " ",
+                         "```C#",
                          "  #if CS_SCRIPT",
                          "       Console.WriteLine(\"Running as a script...\");",
                          "  #endif",
+                         "```",
                          "The script engine also defines another conditional symbol `NETCORE` to allow user" +
                          "to distinguish between executions under .NET (full) and .NET Core",
                          section_sep, //------------------------------------
-                         "//css_include <file>;",
+                         "`//css_include <file>;`",
                          " ",
-                         alias_prefix + "//css_inc",
-                         "file - name of a script file to be included at compile-time.",
+                         alias_prefix + "`//css_inc`",
                          " ",
-                         "This directive is used to import one script into another one. It is a logical equivalent of '#include' in C++. " +
-                         "This directive is a full but more convenient equivalent of //css_import <file>, preserve_main;",
+                         "`file` - name of a script file to be included at compile-time.",
+                         " ",
+                         "_**This directive is available for both CLI and hosted script execution.**_",
+                         " ",
+                         "This directive is used to import/include one script into another one. It is a logical equivalent of '#include' in C++.",
                          " ",
                          "If a relative file path is specified with a single-dot prefix it will be automatically converted into the absolute path " +
                          "with respect to the location of the script file containing the `//css_include` directive. " +
@@ -678,55 +737,75 @@ namespace csscript
                          "If for whatever reason it is preferred to always resolve path expression with respect to the parent script location " +
                          "you can configure the script engine to do it with the following command:",
                          " ",
+                         "```txt",
                          "   cscs -config:set:ResolveRelativeFromParentScriptLocation = true",
+                         "``` ",
                          " ",
-                         "Note if you use wildcard in the imported script name (e.g. *_build.cs) the directive will only import from the first " +
+                         "Note, if you use a wildcard in the imported script name (e.g. ./*_build.cs) the directive will only import from the first " +
                          "probing directory where the matching file(s) is found. Be careful with the wide wildcard as '*.cs' as they may lead to " +
                          "unpredictable behavior. For example they may match everything from the very first probing directory, which is typically a current " +
                          "directory. Using more specific wildcards is arguably more practical (e.g. 'utils/*.cs', '*Helper.cs', './*.cs')",
                          section_sep, //------------------------------------
-                         "//css_import <file>[, preserve_main][, rename_namespace(<oldName>, <newName>)];",
+                         "`//css_import <file>[, preserve_main][, rename_namespace(<oldName>, <newName>)];`",
                          " ",
-                         alias_prefix + "//css_imp",
-                         "There are also another two aliases: //css_include and //css_inc. They are equivalents of `//css_import <file>, preserve_main`.",
-                         "This makes //css_import a more advanced version of //css_include. So you can use it to solve some more unusual runtime " +
-                         "scenarios. It is recommended that you use //css_include if you can. And //css_import if you have to. The //css_include " +
-                         "directive is simpler and requires no processing of the file being imported.",
-                         "This section only describes behavior specific for //css_import. Thus for the generic behavior of the directive go to the //css_include help.",
-                         "If $this (or $this.name) is specified as part of <file> it will be replaced at execution time with the main script full name (or file name only).",
+                         alias_prefix + "`//css_imp`",
                          " ",
-                         "file            - ${<==}name of a script file to be imported at compile-time.",
-                         "<preserve_main> - ${<==}do not rename 'static Main'. ",
-                         "                  ${<==}.NET allows only one entry point 'static Main' method per application.Thus it is a problem if the primary and " +
+                         "This is a more specialized version of the default script importing directive //css_include (//css_inc) " +
+                         "with some extra renaming functionality.",
+                         "While //css_include simply includes a script file in the execution as is, //css_import analyzes the file being imported " +
+                         "and renames namespaces and static Main(...) to avoid naming collisions. Thus you should use it only if you " +
+                         "have naming collision problems.",
+                         "```txt ",
+                         "file             - ${<==}name of a script file to be imported at compile-time.",
+                         "preserve_main    - ${<==}do not rename 'static Main'. ",
+                         "                   ${<==}.NET allows only one entry point 'static Main' method per application.Thus it is a problem if the primary and " +
                          "the imported scripts both contain 'static Main'.To avoid this the script engine searches the imported script for 'static Main' method " +
                          "and renames it in 'i_Main' and then uses a temporary copy of the processed imported script during the execution. If you need to use the " +
                          "imported script as is, then you should use 'preserve_main' argument with the '//css_import' directive.",
-                         "oldName         - ${<==}name of a namespace to be renamed during importing",
-                         "newName         - ${<==}new name of a namespace to be renamed during importing",
-                         " ",
-                         "This directive is used to import one script into another at compile time. Thus code from one script can be exercised in another one." +
-                         "the `rename_namespace` clause can appear in the directive multiple times.",
+                         "rename_namespace - ${<==}rename namespace clause, it can appear in the directive multiple times",
+                         "oldName          - ${<==}name of a namespace to be renamed during importing",
+                         "newName          - ${<==}new name of a namespace to be renamed during importing",
+                         "``` ",
                          section_sep, //------------------------------------
                          " ",
-                         "//css_nuget [-noref] [-force[:delay]] [-ver:<version>] [-rt:<runtime>] [-ng:<nuget arguments>] package0[,package1]..[,packageN];",
+                         "`//css_nuget [-force] [-ver:<version>] package0[,package1]..[,packageN];`",
                          " ",
                          "Downloads/Installs the NuGet package. It also automatically references the downloaded package assemblies.",
-                         "Note: The directive switches need to be in the order as above.",
-                         "      A new NuGet support available from version 4.7.0 will obsolete some of the options of this directive",
-                         "      New NuGet support can be enabled by setting `LegacyNugetSupport` option to false with `css -config:set:LegacyNugetSupport=false`)",
-                         "      Read more: https://github.com/oleg-shilo/cs-script/wiki/NuGet-Support",
+                         "By default, the package is not downloaded again if it was already downloaded.",
+                         "CS-Script uses dotnet.exe to manage NuGet packages. This makes the developer experience fully consistent with " +
+                         "traditional SW development of compiled .NET applications.",
+                         "```txt",
+                         " -force - ${<==}switch to force individual packages downloading even when they were already downloaded.",
+                         " -ver:<version> - ${<==}switch to download/reference a specific package version.",
+                         "``` ",
+                         " Examples: //css_nuget cs-script;",
+                         "           //css_nuget -force NLog",
                          " ",
-                         "By default the package is not downloaded again if it was already downloaded.",
+                         "--- Legacy NuGet support ---",
+                         " ",
+                         "Before v4.7.0 CS-SCript was relying on nuget.exe, the only option available in .NET at that time.",
+                         "To allow backwards compatibility this mode is still available and it can be enabled by setting `LegacyNugetSupport` " +
+                         "configuration value option to false with `css -config:set:LegacyNugetSupport=true`",
+                         "Read more: https://github.com/oleg-shilo/cs-script/wiki/NuGet-Support",
+                         " ",
+                         "Note: Legacy NuGet support is less reliable, predictable or flexible (e.g. does not support package native assets) " +
+                         "thus it's highly recommend that you use this mode only if you have to.",
+                         " ",
+                         "The legacy NuGet support CLI is somewhat different:",
+                         "`//css_nuget [-noref] [-force[:delay]] [-ver:<version>] [-rt:<runtime>] [-ng:<nuget arguments>] package0[,package1]..[,packageN];`",
+                         " ",
                          "If no version is specified then the highest downloaded version (if any) will be used.",
                          "Referencing the downloaded packages can only handle simple dependency scenarios when all downloaded assemblies are to be referenced.",
                          "You should use '-noref' switch and reference assemblies manually for all other cases. For example multiple assemblies with the same file name that " +
                          "target different CLRs (e.g. v3.5 vs v4.0) in the same package.",
                          "Switches:",
+                         " ",
+                         "```txt",
                          " -noref         - ${<==}switch for individual packages if automatic referencing isn't desired.",
                          "                  ${<==}You can use 'css_nuget' environment variable for further referencing package content (e.g. //css_dir %css_nuget%\\WixSharp\\**)",
                          "                  ${<==}(Not available with new NuGet support)",
                          " -force[:delay] - ${<==}switch to force individual packages downloading even when they were already downloaded.",
-                         "                  ${<==}You can optionally specify delay for the next forced downloading by number of seconds since last download.",
+                         "                  ${<==}You can optionally specify a delay for the next forced downloading by the number of seconds since last download.",
                          "                  ${<==}'-force:3600' will delay it for one hour. This option is useful for preventing frequent download interruptions during active script development.",
                          "                  ${<==}(Not available with new NuGet support)",
                          " -ver:<version> - ${<==}switch to download/reference a specific package version.",
@@ -734,6 +813,7 @@ namespace csscript
                          "                  ${<==}(Not available with new NuGet support)",
                          " -ng:<args>     - ${<==}switch to pass `nuget.exe`/`dotnet restore` arguments for every individual package.",
                          "                  ${<==}(`-restore:` as an alias of this switch)",
+                         "``` ",
                          " ",
                          "Example: //css_nuget cs-script;",
                          "         //css_nuget -restore:\"-v minimal\" -ver:4.1.2 NLog",
@@ -743,19 +823,21 @@ namespace csscript
                          "This directive will install CS-Script NuGet package.",
                          "(see http://www.csscript.net/help/script_nugets.html)",
                          section_sep,
-                         "//css_args arg0[,arg1]..[,argN];",
+                         "`//css_args arg0[,arg1]..[,argN];`",
                          " ",
-                         "Embedded script arguments. The both script and engine arguments are allowed except \"/noconfig\" engine command switch.",
-                         "Example: //css_args -dbg, -inmem;",
-                         "This directive will always force script engine to execute the script in debug mode.",
+                         "Embedded script arguments. Both script and engine arguments are allowed except \"/noconfig\" engine command switch.",
+                         " ",
+                         "Example: `//css_args -dbg, -inmem;`",
+                         "This directive will always force the script engine to execute the script in debug mode.",
                          "Note: the arguments must be coma separated.",
                          section_sep, //------------------------------------
-                         "//css_reference <file>;",
+                         "`//css_reference <file>;`",
                          " ",
-                         alias_prefix + "//css_ref",
-                         "file - name of the assembly file to be loaded at run-time.",
+                         alias_prefix + "`//css_ref`",
+                         " ",
+                         "`file` - name of the assembly file to be loaded at run-time.",
                          "",
-                         "This directive is used to reference assemblies required at run time.",
+                         "_**This directive is used to reference assemblies required at run time.**_",
                          "The assembly must be in GAC, the same folder with the script file or in the 'Script Library' folders (see 'CS-Script settings').",
                          " ",
                          "Note if you use wildcard in the referenced assembly name (e.g. socket.*.dll) the directive will only reference from the first " +
@@ -764,48 +846,55 @@ namespace csscript
                          "directory. Using more specific wildcards is arguably more practical (e.g. 'utils/*.dll', '*Helper.dll', './*.dll')",
                          " ",
                          section_sep, //------------------------------------
-                         "//css_precompiler <file 1>,<file 2>;",
+                         "`//css_precompiler <file 1>,<file 2>;`",
                          " ",
-                         alias_prefix + "//css_pc",
-                         "file - name of the script or assembly file implementing precompiler.",
+                         alias_prefix + "`//css_pc`",
+                         " ",
+                         "`file` - name of the script or assembly file implementing precompiler.",
                          " ",
                          "This directive is used to specify the CS-Script precompilers to be loaded and exercised against script at run time just " +
                          "before compiling it. Precompilers are typically used to alter the script coder before the execution. Thus CS-Script uses " +
                          "built-in precompiler to decorate classless scripts executed with -autoclass switch.",
                          "(see http://www.csscript.net/help/precompilers.html",
                          section_sep, //------------------------------------
-                         "//css_searchdir <directory>;",
+                         "`//css_searchdir <directory>;`",
                          " ",
-                         alias_prefix + "//css_dir",
+                         alias_prefix + "`//css_dir`",
+                         " ",
                          "directory - name of the directory to be used for script and assembly probing at run-time.",
                          " ",
                          "This directive is used to extend set of search directories (script and assembly probing).",
                          "The directory name can be a wildcard based expression.In such a case all directories matching the pattern will be this " +
                          "case all directories will be probed.",
                          "The special case when the path ends with '**' is reserved to indicate 'sub directories' case. Examples:",
+                         "```C#",
                          "${<=4}//css_dir packages\\ServiceStack*.1.0.21\\lib\\net40",
                          "${<=4}//css_dir packages\\**",
+                         "```",
                          section_sep, //------------------------------------
-                         "//css_winapp",
+                         "`//css_winapp`",
                          " ",
-                         alias_prefix + "//css_winapp",
+                         alias_prefix + "`//css_winapp`",
+                         " ",
                          "Adds search directories required for running WinForm and WPF scripts.",
                          "Note: you need to use csws.exe engine to run WPF scripts.",
                          "Alternatively you can set environment variable 'CSS_WINAPP' to non empty value and css.exe shim will redirect the " +
                          "execution to the csws.exe executable.",
                          section_sep, //------------------------------------
-                         "//css_webapp",
+                         "`//css_webapp`",
                          " ",
-                         alias_prefix + "//css_webapp",
+                         alias_prefix + "`//css_webapp`",
+                         " ",
                          "Indicates that the script app needs to be compiled against Microsoft.AspNetCore.App framework.",
                          "A typical example is a WebAPI script application.",
                          section_sep, //------------------------------------
-                         "//css_autoclass [style]",
+                         "`//css_autoclass [style]`",
                          " ",
-                         alias_prefix + "//css_ac",
-                         "OBSOLETE, use top-class native C# 9 feature instead",
+                         alias_prefix + "`//css_ac`",
+                         " ",
+                         "_**OBSOLETE, use top-class native C# 9 feature instead**_",
                          "Automatically generates 'static entry point' class if the script doesn't define any.",
-                         " ",
+                         "```C# ",
                          "    //css_ac",
                          "    using System;",
                          " ",
@@ -813,38 +902,38 @@ namespace csscript
                          "    {",
                          "        Console.WriteLine(\"Hello World!\");",
                          "    }",
-                         " ",
+                         "``` ",
                          "Using an alternative 'instance entry point' is even more convenient (and reliable).",
                          "The acceptable 'instance entry point' signatures are:",
-                         " ",
+                         "```C#",
                          "    void main()",
                          "    void main(string[] args)",
                          "    int main()",
                          "    int main(string[] args)",
-                         " ",
+                         "``` ",
                          "The convention for the classless (auto-class) code structure is as follows:",
-                         " - set of 'using' statements" +
-                         " - classless 'main' " +
-                         " - user code " +
-                         " - optional //css_ac_end directive" +
-                         " - optional user code that is not a subject of auto-class decoration" +
-                         "(see https://github.com/oleg-shilo/cs-script/wiki/CLI---User-Guide#command-auto-class)",
+                         " - set of 'using' statements",
+                         " - classless 'main' ",
+                         " - user code ",
+                         " - optional //css_ac_end directive",
+                         " - optional user code that is not a subject of auto-class decoration",
+                         "(see https://github.com/oleg-shilo/cs-script/wiki/CLI-Script-Execution#command-auto-class)",
                          " ",
                          "A special case of auto-class use case is a free style C# code that has no entry point 'main' at all:",
-                         " ",
+                         "```C# ",
                          "    //css_autoclass freestyle",
                          "    using System;",
                          " ",
                          "    Console.WriteLine(Environment.Version);",
-                         " ",
+                         "``` ",
                          "Since it's problematic to reliable auto-detect free style auto-classes, they must be defined with the " +
                          "special parameter 'freestyle' after the '//css_ac' directive",
                          " ",
-                         "By default CS-Script decorates the script by adding a class declaration statement to the " +
-                         "start of the script routine and a class closing bracket to the end. This may have an unintended " +
+                         "By default, CS-Script decorates the script by adding a class declaration statement to the " +
+                         "start of the script routine and a class-closing bracket to the end. This may have an unintended " +
                          "effect as any class declared in the script becomes a 'nested class'. While it is acceptable " +
                          "for practically all use-cases it may be undesired for just a few scenarios. For example, any " +
-                         "class containing method extensions must be a top level static class, what conflicts with the " +
+                         "class containing method extensions must be a top-level static class, which conflicts with the " +
                          "auto-class decoration algorithm.",
                          " ",
                          "An additional '//css_autoclass_end' ('//css_ac_end') directive can be used to solve this problem.",
@@ -853,7 +942,7 @@ namespace csscript
                          "into) an auto-class.",
                          "This directive allows defining top level static classes in the class-less scripts, which is required for " +
                          "implementing extension methods.",
-                         " ",
+                         "```C# ",
                          " //css_ac",
                          " using System;",
                          " ",
@@ -871,13 +960,15 @@ namespace csscript
                          "         ...",
                          "     }",
                          " }",
+                         "``` ",
                          section_sep, //------------------------------------
-                         "//css_resource <file>[, <out_file>];",
+                         "`//css_resource <file>[, <out_file>];`",
                          " ",
-                         alias_prefix + "//css_res",
-                         "file     - name of the compiled resource file (.resources) to be used with the script.",
-                         "           ${<==}Alternatively it can be the name of the XML resource file (.resx) that will be compiled on-fly.",
-                         "out_file - ${<==}Optional name of the compiled resource file (.resources) to be generated form the .resx input." +
+                         alias_prefix + "`//css_res`",
+                         " ",
+                         "`file`     - name of the compiled resource file (.resources) to be used with the script.",
+                         "             ${<==}Alternatively, it can be the name of the XML resource file (.resx) that will be compiled on-fly.",
+                         "`out_file  - ${<==}Optional name of the compiled resource file (.resources) to be generated form the .resx input." +
                          "If not supplied then the compiled file will have the same name as the input file but the file extension '.resx' " +
                          "changed to '.resources'.",
                          " ",
@@ -886,11 +977,11 @@ namespace csscript
                          "          //css_res Resources1.resx;",
                          "          //css_res Form1.resx, Scripting.Form1.resources;",
                          section_sep, //------------------------------------
-                         "//css_co <options>;",
+                         "`//css_co <options>;`",
                          " ",
-                         "options - options string.",
+                         "`options` - options string.",
                          " ",
-                         "This directive is used to pass compiler options string directly to the language specific CLR compiling engine.",
+                         "This directive is used to pass compiler options string directly to the language-specific CLR compiling engine.",
                          "Note: ",
                          "- the options may not be compatible with the compiling engine of your choice (see //css_engine)." +
                          "Thus `//css_co /define:CS_SCRIPT` will work for `csc` engine but will not for `dotnet` since it does not support /define.",
@@ -901,45 +992,47 @@ namespace csscript
                          "          //css_co -nullable:enable -warnaserror:nullable to enable nullable reference types.\n",
 
                          section_sep, //------------------------------------
-                         "//css_engine <csc|dotnet|roslyn>;",
+                         "`//css_engine <csc|dotnet|roslyn>;`",
                          " ",
-                         alias_prefix + "//css_ng",
+                         alias_prefix + "`//css_ng`",
                          " ",
                          "This directive is used to select compiler services for building a script into an assembly.",
-                         "  dotnet - use `dotnet.exe` and on-fly .NET projects.",
-                         "           ${<==}This is a default compiler engine that handles well even complicated " +
+                         "```txt ",
+                         " dotnet - use `dotnet.exe` and on-fly .NET projects.",
+                         "          ${<==}This is a default compiler engine that handles well even complicated " +
                          "heterogeneous multi-file scripts like WPF scripts.",
-                         "  csc    - use `csc.exe`. ",
-                         "           ${<==}This compiler shows much better performance. Though it is not suitable for WPF scripts.",
+                         " csc    - use `csc.exe`. ",
+                         "          ${<==}This compiler shows much better performance. Though it is not suitable for WPF scripts.",
                          "This feature is conceptually similar to the VBCSCompiler.exe build server, which is not available in in .NET5/.NET-Core. " +
                          "Even though available on .NET-Fx (Roslyn).",
-                         "           ${<==}Using this option can in order of magnitude improve compilation speed. However it's not suitable for " +
+                         "          ${<==}Using this option can in order of magnitude improve compilation speed. However it's not suitable for " +
                          "compiling WPF scripts because csc.exe cannot compile XAML.",
-                         "           ${<==}While this feature useful it will be deprecated when .NET5+ starts distributing its own properly" +
+                         "          ${<==}While this feature is useful it will be deprecated when .NET5+ starts distributing its own properly " +
                          "working build server VBCSCompiler.exe.",
-                         "  roslyn - use `Microsoft.CodeAnalysis.CSharp.Scripting.dll` (Roslyn). ",
-                         "           ${<==}This compiler shows good performance and does not require .NET SDK. Though it is not suitable for WPF scripts. " +
+                         "roslyn - use `Microsoft.CodeAnalysis.CSharp.Scripting.dll` (Roslyn). ",
+                         "         ${<==}This compiler shows good performance and does not require .NET SDK. Though, it is not suitable for WPF scripts. " +
                          "See [this wiki](https://github.com/oleg-shilo/cs-script/wiki/Choosing-Compiler-Engine) for details.",
-                         " ",
+                         "``` ",
                          " Example: //css_engine csc" + NewLine,
                          section_sep, //------------------------------------
-                         "//css_ignore_namespace <namespace>;",
+                         "`//css_ignore_namespace <namespace>;`",
                          " ",
-                         alias_prefix + "//css_ignore_ns",
+                         alias_prefix + "`//css_ignore_ns`",
+                         " ",
                          "namespace - name of the namespace. Use '*' to completely disable namespace resolution",
                          " ",
-                         "This directive is used to prevent CS-Script from resolving the referenced namespace into assembly.",
+                         "This directive is used to prevent CS-Script from resolving the referenced namespace into the assembly.",
 
                          section_sep, //------------------------------------
-                         "//css_ac_end",
+                         "`//css_ac_end`",
                          " ",
                          "This directive is only applicable for class-less scripts executed with '-autoclass' CLI argument. " +
                          "It's nothing else but a marker indicating the end of the code that needs to be decorated as (wrapped " +
                          "into) an auto-class.",
-                         "This directive allows achieving top level static classes in the class-less scripts, which is required for " +
+                         "This directive allows achieving top-level static classes in the class-less scripts, which is required for " +
                          "implementing extension methods.",
-                         " ",
-                         " //css_args -acutoclass",
+                         "```C# ",
+                         " //css_args -autoclass",
                          " using System;",
                          " ",
                          " void main()",
@@ -956,42 +1049,53 @@ namespace csscript
                          "         ...",
                          "     }",
                          " }",
-
+                         "``` ",
                          section_sep, //------------------------------------
-                         "//css_prescript file([arg0][,arg1]..[,argN])[ignore];",
-                         "//css_postscript file([arg0][,arg1]..[,argN])[ignore];",
+                         "`//css_prescript file([arg0][,arg1]..[,argN])[ignore];`",
                          " ",
-                         "Aliases - //css_pre and //css_post",
-                         "file    - script file (extension is optional)",
-                         "arg0..N - script string arguments",
-                         "ignore  - ${<==}continue execution of the main script in case of error",
+                         alias_prefix + "`//css_pre`",
                          " ",
-                         "These directives are used to execute secondary pre- and post-execution scripts.",
+                         "`file`    - script file (extension is optional)",
+                         "`arg0..N` - script string arguments",
+                         "`ignore`  - ${<==}continue execution of the main script in case of error",
+                         " ",
+                         "These directives are used to execute secondary pre-execution scripts.",
                          "If $this (or $this.name) is specified as arg0..N it will be replaced at execution time with the main script full name (or file name only).",
                          "You may find that in many cases precompilers (//css_pc and -pc) are a more powerful and flexible alternative to the pre-execution script.",
                          section_sep, //------------------------------------
+                         "`//css_postscript file([arg0][,arg1]..[,argN])[ignore];`",
+                         alias_prefix + "`//css_post`",
+                         " ",
+                         "`file`    - script file (extension is optional)",
+                         "`arg0..N` - script string arguments",
+                         "`ignore`  - ${<==}continue execution of the main script in case of error",
+                         " ",
+                         "These directives are used to execute secondary post-execution scripts.",
+                         "If $this (or $this.name) is specified as arg0..N it will be replaced at execution time with the main script full name (or file name only).",
+                         " ",
+                         section_sep + "-", // important to add extra `-` so the separator is preasent  in CLI and MD
                          "{$css_host}",
                          " ",
                          "Note the script engine always sets the following environment variables:",
-                         " 'pid'                     - ${<==}host processId (e.g. Environment.GetEnvironmentVariable(\"pid\")",
-                         " 'CSScriptRuntime'         - ${<==}script engine version",
-                         " 'CSScriptRuntimeLocation' - ${<==}script engine location",
-                         " 'cscs_exe_dir'            - ${<==}script engine directory",
-                         " 'EntryScript'             - ${<==}location of the entry script",
-                         " 'EntryScriptAssembly'     - ${<==}location of the compiled script assembly",
-                         " 'location:<asm_hash>'    - ${<==}location of the compiled script assembly.",
+                         " `pid`                     - ${<==}host processId (e.g. Environment.GetEnvironmentVariable(\"pid\")",
+                         " `CSScriptRuntime`         - ${<==}script engine version",
+                         " `CSScriptRuntimeLocation` - ${<==}script engine location",
+                         " `cscs_exe_dir`            - ${<==}script engine directory",
+                         " `EntryScript`             - ${<==}location of the entry script",
+                         " `EntryScriptAssembly`     - ${<==}location of the compiled script assembly",
+                         " `location:<asm_hash>`     - ${<==}location of the compiled script assembly.",
                          " ",
                          "This variable is particularly useful as it allows finding the compiled assembly file from the inside of the script code. " +
                          "Even when the script loaded in-memory (InMemoryAssembly setting) but not from the original file. " +
                          "(e.g. var location = Environment.GetEnvironmentVariable(\"location:\" + Assembly.GetExecutingAssembly().GetHashCode()); ",
                          " ",
-                         "Note that by default setting of 'location:<asm_hash>' is disabled. You can enable it by setting" +
+                         "Note that the default setting of 'location:<asm_hash>' is disabled. You can enable it by setting" +
                          " 'CSS_SCRIPTLOCATIONREFLECTION' environment variable to non empty string.",
                          " ",
                          "The following is the optional set of environment variables that the script engine uses to improve the user experience:",
                          " ",
                          " 'CSS_NUGET' ",
-                         "${<=6}location of the NuGet packages scripts can load/reference",
+                         "${<=6}location of the NuGet packages, which scripts can load/reference",
                          " ",
                          " 'CSSCRIPT_ROOT'",
                          "${<=6}script engine location. Used by the engine to locate dependencies (e.g. resgen.exe). Typically this variable is during the CS-Script installation.",
@@ -1000,7 +1104,7 @@ namespace csscript
                          "${<=6}script engine output encoding if the one from the css_confix.xml needs to be overwritten.",
                          " ",
                          " 'CSSCRIPT_INC'",
-                         "${<=6}a system wide include directory for the all frequently used user scripts.",
+                         "${<=6}a system-wide include directory for the all frequently used user scripts.",
                          "$(csscript_roslyn)",
                          " ",
                          " 'CSSCRIPT_CSC_CMD_LOG'",
@@ -1009,7 +1113,7 @@ namespace csscript
                          "the advanced debugging scenarios. Of the environment variable is not set or the value is not a valid file path " +
                          "then no log file will be created.",
                          "$(csscript_roslyn)",
-
+                         " ",
                          "---------",
                          "During the script execution CS-Script always injects a little object inspector class 'dbg'. " +
                          "This class contains static printing methods that mimic Python's 'print()'. It is particularly useful for object inspection in the absence of a proper debugger.",
@@ -1018,14 +1122,14 @@ namespace csscript
                          "  dbg.print(\"Now:\", DateTime.Now)        - ${<==}prints concatenated objects.",
                          "  dbg.print(DateTime.Now)                - ${<==}prints object and values of its properties.",
                          "  dbg.printf(\"Now: {0}\", DateTime.Now)   - ${<==}formats and prints object and values of its fields and properties.",
-                         "---------",
                          " ",
+                         "---------",
                          "Any directive has to be written as a single line in order to have no impact on compiling by CLI compliant compiler." +
                          "It also must be placed before any namespace or class declaration.",
                          " ",
                          "---------",
                          "Example:",
-                         " ",
+                         "```C# ",
                          " //css_include web_api_host.cs;",
                          " //css_reference media_server.dll;",
                          " //css_nuget Newtonsoft.Json;",
@@ -1043,9 +1147,9 @@ namespace csscript
                          "               .StartAsConosle(\"http://localhost:8080\");",
                          "   }",
                          " }",
-                         " ",
+                         "``` ",
                          "Or shorter form:",
-                         " ",
+                         "```C# ",
                          " //css_args -ac",
                          " //css_inc web_api_host.cs",
                          " //css_ref media_server.dll",
@@ -1060,10 +1164,11 @@ namespace csscript
                          "     WebApi.SimpleHost(args)",
                          "           .StartAsConosle(\"http://localhost:8080\");",
                          " }",
-                         " ",
+                         "``` ",
+                         "",
                          "---------",
                          " Project Website: https://github.com/oleg-shilo/cs-script",
-                         " ");
+                         "");
 
             if (Runtime.IsWin)
                 syntaxHelp = syntaxHelp.Replace("{$css_host}", "")
@@ -1087,7 +1192,7 @@ namespace csscript
                                                "It's created during setup in order to avoid locking deployment directories because of the running Roslyn binaries."));
 
             var directives = syntaxHelp.Split('\n')
-                                       .Where(x => x.StartsWith("//css_"))
+                                       .Where(x => x.StartsWith("//css_") || x.StartsWith("`//css_"))
                                        .Select(x => "- " + x.TrimEnd())
                                        .JoinBy(NewLine);
 
@@ -1101,7 +1206,10 @@ namespace csscript
     {
         public static string ShowHelp(string helpType, params object[] context)
         {
-            context = context.Where(x => x != null).ToArray();
+            PrintDelegate print = context.OfType<PrintDelegate>().LastOrDefault();
+
+            context = context.Where(x => x != null && x is not PrintDelegate).ToArray();
+
             switch (helpType)
             {
                 case AppArgs.dir:
@@ -1109,7 +1217,7 @@ namespace csscript
                         ExecuteOptions options = (ExecuteOptions)context[0];
                         Settings settings = CSExecutor.LoadSettings(options);
 
-                        StringBuilder builder = new StringBuilder();
+                        var builder = new StringBuilder();
                         builder.AppendLine(CurrentDirectory);
 
                         foreach (string dir in Environment.ExpandEnvironmentVariables(settings.SearchDirs).Split(",;".ToCharArray()))
@@ -1124,96 +1232,179 @@ namespace csscript
                         if (context.Any())
                         {
                             var directive = context.First().ToString();
-                            var alias = AppArgs.alias_prefix + directive;
+                            var alias = AppArgs.alias_prefix + "`" + directive.TrimStart('`');
 
                             var lines = AppArgs.SyntaxHelp.GetLines();
 
-                            var top_lines = lines.TakeWhile(x => !x.StartsWith(directive) && !x.StartsWith(alias));
+                            var top_lines = lines.TakeWhile(x => !x.TrimStart('`').StartsWith(directive) && !x.StartsWith(alias)).ToArray();
                             var bottom_lines = lines.Skip(top_lines.Count())
-                                                    .TakeWhile(x => x != AppArgs.section_sep);
+                                                    .TakeWhile(x => x != AppArgs.section_sep)
+                                                    .ToArray();
 
                             var help = top_lines.Reverse()
                                                 .TakeWhile(x => x != AppArgs.section_sep)
                                                 .Reverse()
                                                 .Concat(bottom_lines.TakeWhile(x => x != AppArgs.section_sep))
                                                 .JoinBy(NewLine);
-                            return help;
+                            return help.FromMdToTxt();
                         }
-                        // else
                         return AppArgs.SyntaxHelp;
                     }
                 case AppArgs.cmd:
                 case AppArgs.commands:
                     {
-                        Dictionary<string, string> map = new Dictionary<string, string>();
-                        int longestArg = 0;
+                        // Printing command info can be time consuming as it involves executing extended commands scripts.
+                        // So it makes sense to start printing as soon as we get some data
 
-                        foreach (FieldInfo info in typeof(AppArgs).GetFields())
+                        var builder = new StringBuilder();
+
+                        Action<string> AppendLine = x =>
                         {
-                            if (info.IsPublic && info.IsLiteral && info.IsStatic && info.FieldType == typeof(string))
+                            if (print == null)
+                                builder.AppendLine(x);
+                            else
+                                print(x);
+                        };
+
+                        if (context.Count() == 0)
+                        {
+                            var map = new Dictionary<string, string>();
+                            int longestArg = 0;
+
+                            foreach (FieldInfo info in typeof(AppArgs).GetFields())
                             {
-                                string arg = (string)info.GetValue(null);
-                                string description = "";
-
-                                if (AppArgs.switch1Help.ContainsKey(arg))
-                                    description = AppArgs.switch1Help[arg].Description;
-                                else if (AppArgs.switch2Help.ContainsKey(arg))
-                                    description = AppArgs.switch2Help[arg].Description;
-                                else
-                                    continue;
-
-                                if (map.ContainsKey(description))
+                                if (info.IsPublic && info.IsLiteral && info.IsStatic && info.FieldType == typeof(string))
                                 {
-                                    string capturedArg = map[description];
-                                    map[description] = capturedArg + "|" + $"-{arg}";
+                                    string arg = (string)info.GetValue(null);
+                                    string description = "";
+
+                                    if (AppArgs.switch1Help.ContainsKey(arg))
+                                        description = AppArgs.switch1Help[arg].Description;
+                                    else if (AppArgs.switch2Help.ContainsKey(arg))
+                                        description = AppArgs.switch2Help[arg].Description;
+                                    else
+                                        continue;
+
+                                    if (map.ContainsKey(description))
+                                    {
+                                        string capturedArg = map[description];
+                                        map[description] = capturedArg + "|" + $"-{arg}";
+                                    }
+                                    else
+                                        map[description] = $"-{arg}";
+
+                                    longestArg = Math.Max(map[description].Length, longestArg);
                                 }
-                                else
-                                    map[description] = $"-{arg}";
-
-                                longestArg = Math.Max(map[description].Length, longestArg);
                             }
-                        }
 
-                        StringBuilder builder = new StringBuilder();
-
-                        foreach (string key in map.Keys)
-                        {
-                            string arg = map[key].Trim();
-                            arg = string.Format("{0,-" + longestArg + "}", arg);
-                            builder.AppendLine($"{arg}   {key}");
+                            foreach (string key in map.Keys)
+                            {
+                                string arg = map[key].Trim();
+                                arg = string.Format("{0,-" + longestArg + "}", arg);
+                                AppendLine($"{arg}   {key}");
+                            }
                         }
 
                         ////////////////////////////////////////////
                         // exploring custom commands
-                        string[] commandDirs = new[]{
-                            Runtime.CustomCommandsDir,
+                        string[] commandDirs =
+                        [
+                            Assembly.GetExecutingAssembly().Location.GetDirName(),
 #if DEBUG
                             Environment.GetEnvironmentVariable("CSSCRIPT_INSTALLED"),
 #endif
-                            Assembly.GetExecutingAssembly().Location.GetDirName() };
+                            Runtime.CustomCommandsDir,
+                        ];
 
                         var customCommands = commandDirs
+                                                 .Where(dir => dir.DirExists())
                                                  .SelectMany(dir =>
                                                  {
                                                      var commands = Directory.GetFiles(dir, "-run.cs", SearchOption.AllDirectories)
-                                                                             .Select(x => x.Substring(dir.Length)
-                                                                                           .GetDirName()
-                                                                                           .Replace(Path.DirectorySeparatorChar.ToString(), ""));
+                                                                             .Select(x =>
+                                                                             {
+                                                                                 var name = x.Substring(dir.Length)
+                                                                                     .GetDirName()
+                                                                                     .Replace(Path.DirectorySeparatorChar.ToString(), "");
+
+                                                                                 // return $"{name} (v{x.GetCommandScriptVersion()})";
+                                                                                 return new
+                                                                                 {
+                                                                                     Name = name,
+                                                                                     Version = new Version(x.GetCommandScriptVersion()),
+                                                                                     Path = x
+                                                                                 };
+                                                                             });
                                                      return commands;
                                                  })
-                                                 .Order();
+                                                 .OrderBy(x => x.Name)
+                                                 .ThenByDescending(x => x.Version);
 
-                        builder.AppendLine();
-                        builder.AppendLine("--------------------------------------------");
-                        builder.AppendLine("Custom commands defined by the user.");
-                        builder.AppendLine("(use `cscs <command> ?` for further details");
-                        builder.AppendLine(" see https://github.com/oleg-shilo/cs-script/wiki/Custom-Commands)");
-                        builder.AppendLine("--------------------------------------------");
-                        builder.AppendLine();
+                        AppendLine("");
+                        AppendLine("--------------------------------------------");
+                        AppendLine("Custom commands defined by the user.");
+                        AppendLine("(Usage: `css <command> ?`. For further details see");
+                        AppendLine(" https://github.com/oleg-shilo/cs-script/wiki/Custom-Commands)");
+                        AppendLine("--------------------------------------------");
+                        AppendLine("");
 
-                        foreach (var item in customCommands)
+                        // to filter out `v1.0.0 (C:\Users\user\.dotnet\tools\.store\cs-script.cli\4.9.2\cs-script.cli...`
+
+                        try
                         {
-                            builder.AppendLine($"  {item}");
+                            foreach (var item in customCommands.GroupBy(x => x.Name))
+                            {
+                                if (context.Contains("x"))
+                                {
+                                    AppendLine($"{item.Key}");
+                                    foreach (var command in item)
+                                        AppendLine($"  v{command.Version}: {command.Path}");
+                                }
+                                else
+                                {
+                                    var commandFile = item.OrderByDescending(x => x.Version).First().Path;
+                                    var commandDir = commandFile.GetDirName();
+                                    var versionFile = Directory.GetFiles(commandDir, "*.version").FirstOrDefault() ?? commandDir.PathJoin("1.0.0.version");
+                                    var cachedDescription = versionFile.FileExists() ? File.ReadAllText(versionFile) : null;
+
+                                    var description = cachedDescription;
+
+                                    if (!description.HasText() || version.IsMatch(description) || File.GetLastWriteTimeUtc(versionFile) != File.GetLastWriteTimeUtc(commandFile))
+                                    {
+                                        (var result, description) = GenerateCommadDescription(item.Key);
+
+                                        if (description.Trim() != NuGet.RestoreMarker)
+                                        {
+                                            var defaultDescription = $"< run `css {item.Key} ?` to generate the description >";
+                                            if (result == -1) //timeout
+                                            {
+                                                description = defaultDescription;
+                                            }
+                                            else if (result == 0 && description.HasText())
+                                            {
+                                                File.WriteAllText(versionFile, description);
+                                                File.SetLastWriteTimeUtc(versionFile, File.GetLastWriteTimeUtc(commandFile));
+                                            }
+                                            else
+                                            {
+                                                description = defaultDescription;
+                                            }
+                                        }
+                                    }
+
+                                    if (description.Trim() == NuGet.RestoreMarker)
+                                    {
+                                        description = "< the description will be available on the next run >";
+                                        File.WriteAllText(versionFile, "");
+                                    }
+
+                                    AppendLine($"  {item.Key,-15} {description}");
+                                }
+                            }
+                        }
+                        catch (Exception e)
+                        {
+                            AppendLine($"Error: {e.Message}");
                         }
 
                         return builder.ToString();
@@ -1222,6 +1413,48 @@ namespace csscript
                 default:
                     return "<unknown command>";
             }
+        }
+
+        static Regex version = "v*.*.* (*".WildCardToRegExp();
+
+        static (int, string) GenerateCommadDescription(string command)
+        {
+            var output = "";
+            var result = -1;
+
+            bool sucecs = Task.Run(() =>
+            {
+                var process = new Process();
+                try
+                {
+                    process.StartInfo.FileName = "dotnet";
+                    process.StartInfo.Arguments = $"\"{Assembly.GetExecutingAssembly().Location}\" {command} ?";
+                    process.StartInfo.WorkingDirectory = SpecialFolder.UserProfile.GetPath();
+
+                    process.StartInfo.UseShellExecute = false;
+                    process.StartInfo.ErrorDialog = false;
+                    process.StartInfo.CreateNoWindow = true;
+                    process.StartInfo.RedirectStandardOutput = true;
+                    process.StartInfo.RedirectStandardError = true;
+                    process.Start();
+
+                    output = process.StandardOutput.ReadToEnd();
+                    output = output?.GetLines().FirstOrDefault(x => !version.IsMatch(x));
+
+                    process.WaitForExit();
+                    result = process.ExitCode;
+                }
+                catch (Exception e)
+                {
+                    output = e.Message;
+                }
+                finally
+                {
+                    process.Kill();
+                }
+            }).Wait(5000);
+
+            return (result, output);
         }
 
         public static string BuildCommandInterfaceHelp(string arg)
@@ -1238,7 +1471,7 @@ namespace csscript
             if (arg != null && !scope.IsOneOf("cli", "syntax", "-out"))
             {
                 return AppArgs.LookupSwitchHelp(arg) ??
-                       "Invalid 'cmd' argument. Use '" + AppInfo.appName + " -cmd' for the list of valid commands." + Environment.NewLine + AppArgs.switch1Help[AppArgs.help].GetFullDoc();
+                       "Invalid 'cmd' argument. Use '" + AppInfo.AppName + " -cmd' for the list of valid commands." + Environment.NewLine + AppArgs.switch1Help[AppArgs.help].GetFullDoc();
             }
 
             var builder = new StringBuilder();
@@ -1254,7 +1487,22 @@ namespace csscript
 
                     "## CLI Commands" + NewLine;
 
-                var usage = "Usage: " + AppInfo.appName + " <switch 1> <switch 2> <file> [params] [//x]";
+                var usage = "Usage: " + AppInfo.AppName + " <switch 1> <switch 2> <file> [params] [//x]";
+
+                void printTopLevelParams()
+                {
+                    foreach (AppArgs.ArgInfo info in AppArgs.miscHelp.Values)
+                    {
+                        if (alreadyPrinted.Contains(info.ArgSpec))
+                            continue;
+
+                        if (mdFormat)
+                            builder.AppendLine($"- {info.ArgSpec}\r\n  {info.Description}");
+                        else
+                            builder.AppendLine($"{info.ArgSpec}\t{info.Description}");
+                        alreadyPrinted.Add(info.ArgSpec);
+                    }
+                }
 
                 if (mdFormat)
                 {
@@ -1262,8 +1510,9 @@ namespace csscript
                         .AppendLine(page_intro)
                         .AppendLine("```")
                         .AppendLine(usage)
-                        .AppendLine("```")
-                        .AppendLine()
+                        .AppendLine("```");
+                    printTopLevelParams();
+                    builder.AppendLine()
                         .AppendLine("---")
                         .AppendLine("### <switch 1>")
                         .AppendLine();
@@ -1271,8 +1520,12 @@ namespace csscript
                 else
                 {
                     builder
-                        .AppendLine(AppInfo.appLogo)
-                        .AppendLine()
+                        .AppendLine(AppInfo.AppLogo)
+                        .AppendLine(usage)
+                        .AppendLine();
+                    printTopLevelParams();
+                    builder
+                        .AppendLine("---------")
                         .AppendLine("<switch 1>")
                         .AppendLine();
                 }
@@ -1305,24 +1558,21 @@ namespace csscript
 
             if (includeSyntax)
             {
-                builder.AppendLine("---------");
-                foreach (AppArgs.ArgInfo info in AppArgs.miscHelp.Values)
+                if (!mdFormat)
                 {
-                    if (alreadyPrinted.Contains(info.ArgSpec))
-                        continue;
-                    builder.AppendLine(info.GetFullDoc(mdFormat));
+                    builder.AppendLine("---------");
                     builder.AppendLine("");
-                    alreadyPrinted.Add(info.ArgSpec);
+                    builder.AppendLine("");
+                    builder.Append(AppArgs.SyntaxHelp);
                 }
-                builder.AppendLine("");
-                builder.AppendLine("");
-                builder.Append(AppArgs.SyntaxHelp);
+                else
+                    builder.Append(AppArgs.SyntaxHelpMd);
             }
 
             if (mdFormat)
                 return builder.ToString().GetLines().Select(x => x.TrimEnd()).JoinBy(NewLine);
             else
-                return builder.ToString().Replace("```", "");
+                return builder.ToString().FromMdToTxt();
         }
 
         internal class SampleInfo
@@ -1388,12 +1638,12 @@ Examples:
     cscs -new:console console.cs
     cscs -new:winform myapp.cs
     cscs -new:wpf hello
-    cscs -new:cmd edit
+    cscs -new:cmd -edit
 ```".NormalizeNewLines();
 
         internal static SampleInfo[] BuildSampleCode(string appType, string context)
         {
-            appType = appType ?? "";
+            appType ??= "";
 
             if (sampleBuilders.ContainsKey(appType))
                 return sampleBuilders[appType](context);
@@ -1403,31 +1653,39 @@ Examples:
 
         static SampleInfo[] CSharp_command_Sample(string context)
         {
+            if (!context.StartsWith("-"))
+                context = "-" + context;
             var cs =
-@$"using System;
-using System.IO;
-using System.Collections;
-using System.Collections.Generic;
-using System.Linq;
+@$"
+//css_include global-usings
+using System;
 using System.Diagnostics;
+using CSScripting;
 using static dbg;
 using static System.Console;
 using static System.Environment;
 
-var help =
-@""CS-Script custom command for...
-  cscs -{context} [args]
-  (e.g. `cscs -{context} script.cs`)"";
+var thisScript = GetEnvironmentVariable(""EntryScript"");
 
-if (""?,-?,-help,--help"".Split(',').Contains(args.FirstOrDefault()))
+var help =
+@$""Custom command for...
+v{{thisScript.GetCommandScriptVersion()}} ({{thisScript}})
+  css {context} [args]
+  (e.g. `css {context} test.txt`)"";
+
+if (args.IsEmpty() || ""?,-?,-help,--help"".Split(',').Contains(args.FirstOrDefault()))
 {{
     WriteLine(help);
     return;
 }}
 
-WriteLine($""Executing {context} for: [{{string.Join("","", args)}}]"");
-";
-            return new[] { new SampleInfo(cs.NormalizeNewLines(), ".cs") };
+// -----------------------------------------------
+// Command implementation
+// -----------------------------------------------
+
+WriteLine($""Executing {context} for: [{{string.Join("","", args)}}]"");";
+
+            return [new SampleInfo(cs.NormalizeNewLines(), ".cs")];
         }
 
         static SampleInfo[] CSharp_webipi_Sample(string context, bool addOpenApi)
@@ -1473,7 +1731,7 @@ app.Run();
                        .Replace("$extrapackages$", "");
             }
 
-            return new[] { new SampleInfo(cs.NormalizeNewLines(), ".cs") };
+            return [new SampleInfo(cs.NormalizeNewLines(), ".cs")];
         }
 
         static SampleInfo[] CSharp_webipi_min(string context)
@@ -1494,7 +1752,7 @@ app.MapGet(""/test"",
            (HttpRequest request) => new { Name = ""Test Response"", Time = Environment.TickCount });
 app.Run();
 ";
-            return new[] { new SampleInfo(cs.NormalizeNewLines(), ".cs") };
+            return [new SampleInfo(cs.NormalizeNewLines(), ".cs")];
         }
 
         static SampleInfo[] CSharp_winforms_Sample(string context)
@@ -1512,7 +1770,7 @@ class Program
         Application.Run(new Form());
     }
 }";
-            return new[] { new SampleInfo(cs.NormalizeNewLines(), ".cs") };
+            return [new SampleInfo(cs.NormalizeNewLines(), ".cs")];
         }
 
         static SampleInfo[] CSharp_wpf_ss_Sample(string context)
@@ -1591,11 +1849,11 @@ class Program
                 .AppendLine("}")
                 .ToString();
 
-            return new[]
-            {
+            return
+            [
                 new SampleInfo (cs,".cs"),
                 new SampleInfo (xaml, ".xaml")
-            };
+            ];
         }
 
         static SampleInfo[] CSharp_wpf_Sample(string context)
@@ -1637,16 +1895,16 @@ class Program
                 .AppendLine("}")
                 .ToString();
 
-            return new[]
-            {
+            return
+            [
                 new SampleInfo (cs,".cs"),
                 new SampleInfo (xaml, ".xaml")
-            };
+            ];
         }
 
         static SampleInfo[] CSharp_freestyle_Sample(string context)
         {
-            StringBuilder builder = new StringBuilder();
+            var builder = new StringBuilder();
 
             if (!Runtime.IsWin)
             {
@@ -1661,7 +1919,7 @@ class Program
                 .AppendLine("Directory.GetFiles(@\".\\\").print();")
                 .AppendLine("");
 
-            return new[] { new SampleInfo(builder.ToString(), ".cs") };
+            return [new SampleInfo(builder.ToString(), ".cs")];
         }
 
         static SampleInfo[] CSharp_toplevel_Sample(string context)
@@ -1689,7 +1947,7 @@ class Program
 
             builder.AppendLine("");
 
-            return new[] { new SampleInfo(builder.ToString(), ".cs") };
+            return [new SampleInfo(builder.ToString(), ".cs")];
         }
 
         static SampleInfo[] CSharp_toplevel_extended_Sample(string context)
@@ -1725,7 +1983,7 @@ class Program
 
             builder.AppendLine("");
 
-            return new[] { new SampleInfo(builder.ToString(), ".cs") };
+            return [new SampleInfo(builder.ToString(), ".cs")];
         }
 
         static SampleInfo[] CSharp_auto_Sample(string context)
@@ -1752,7 +2010,7 @@ class Program
               .AppendLine("    print(info);")
               .AppendLine("}");
 
-            return new[] { new SampleInfo(cs.ToString(), ".cs") };
+            return [new SampleInfo(cs.ToString(), ".cs")];
         }
 
         static bool isGlobalUsingAvailabe => Globals.LibDir.PathJoin("global-usings.cs").FileExists();
@@ -1795,7 +2053,7 @@ class Program
                 .AppendLine("                 .Take(5));")
                 .AppendLine("\"------------------------------------\".print();")
                 .AppendLine();
-            return new[] { new SampleInfo(builder.ToString(), ".cs") };
+            return [new SampleInfo(builder.ToString(), ".cs")];
         }
 
         static SampleInfo[] CSharp_console_Sample(string context)
@@ -1837,7 +2095,7 @@ class Program
                 .AppendLine("                            .Take(5));")
                 .AppendLine("    }")
                 .AppendLine("}");
-            return new[] { new SampleInfo(builder.ToString(), ".cs") };
+            return [new SampleInfo(builder.ToString(), ".cs")];
         }
 
         static SampleInfo[] DefaultSample(string context) => CSharp10_Sample(context);
@@ -1855,7 +2113,8 @@ Module Module1
     End Sub
 End Module";
 
-            return new[] { new SampleInfo(code.NormalizeNewLines(), ".vb") };
+            SampleInfo[] sampleInfos = [new SampleInfo(code.NormalizeNewLines(), ".vb")];
+            return sampleInfos;
         }
 
         static SampleInfo[] DefaultVbDesktopSample(string context)
@@ -1874,7 +2133,7 @@ Module Module1
         Console.WriteLine(""Hello World! (VB)"")
     End Sub
 End Module";
-            return new[] { new SampleInfo(code.NormalizeNewLines(), ".vb") };
+            return [new SampleInfo(code.NormalizeNewLines(), ".vb")];
         }
 
         public static string BuildPrecompilerSampleCode()
@@ -1922,7 +2181,7 @@ public class Sample_Precompiler //precompiler class name must end with 'Precompi
 
         public static string BuildVersionInfo(string arg)
         {
-            StringBuilder builder = new StringBuilder();
+            var builder = new StringBuilder();
 
             string dotNetVer = null;
 
@@ -1932,7 +2191,7 @@ public class Sample_Precompiler //precompiler class name must end with 'Precompi
             }
             else
             {
-                builder.AppendLine(AppInfo.appLogo.TrimEnd() + " www.csscript.net (github.com/oleg-shilo/cs-script)")
+                builder.AppendLine(AppInfo.AppLogo.TrimEnd() + " www.csscript.net (github.com/oleg-shilo/cs-script)")
                        .AppendLine()
                        .AppendLine("   CLR:             " + Environment.Version + (dotNetVer != null ? " (.NET Framework v" + dotNetVer + ")" : ""))
                        .AppendLine("   System:          " + OSVersion)

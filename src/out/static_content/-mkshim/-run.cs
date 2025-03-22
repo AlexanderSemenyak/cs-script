@@ -38,6 +38,7 @@ static class MkShim
         }
 
         var buildDir = Path.Combine(Path.GetTempPath(), $"mkshim-{Guid.NewGuid()}");
+
         try
         {
             Directory.CreateDirectory(buildDir);
@@ -67,8 +68,14 @@ static class MkShim
 
     static bool HandleUserInput(string[] args)
     {
+        string GetVersion()
+            => Path.GetFileNameWithoutExtension(
+               Directory.GetFiles(Path.GetDirectoryName(Environment.GetEnvironmentVariable("EntryScript")), "*.version")
+                        .FirstOrDefault() ?? "0.0.0.version");
+
         if (args.Contains("-h") || args.Contains("-?") || args.Contains("?") || args.Contains("-help"))
         {
+            Console.WriteLine($@"v{GetVersion()} ({Environment.GetEnvironmentVariable("EntryScript")})");
             Console.WriteLine($@"Generates shim for a given executable file.");
             Console.WriteLine($@"Usage:");
             Console.WriteLine($@"   css -mkshim <shim_name> <mapped_executable>");
@@ -98,6 +105,7 @@ static class MkShim
     static string ExtractFirstIconToFolder(this string binFilePath, string outDir)
     {
         string iconFile = Path.Combine(outDir, Path.GetFileNameWithoutExtension(binFilePath) + ".ico");
+
         using (var s = File.Create(iconFile))
             IconExtractor.Extract1stIconTo(binFilePath, s);
 
@@ -135,7 +143,7 @@ static class MkShim
         var template = File.ReadAllText(templateFile);
         var csFile = Path.Combine(outDir, Path.GetFileName(exe) + ".cs");
 
-        var exePath = $"@\"return {exe};\"";
+        var exePath = $"return @\"{exe}\";";
 
         if (!Path.IsPathRooted(exe))
         {
@@ -167,6 +175,7 @@ static class MkShim
         p.Start();
 
         string line;
+
         while (null != (line = p.StandardOutput.ReadLine()))
         {
             if (line.Trim() != "" && !line.Trim().StartsWith("This compiler is provided as part of the Microsoft (R) .NET Framework,"))
@@ -179,5 +188,5 @@ static class MkShim
         => FileVersionInfo.GetVersionInfo(file).FileVersion;
 
     static string csc
-    => @"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe";
+        => @"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe";
 }

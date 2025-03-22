@@ -1,8 +1,12 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Runtime.Loader;
+using System.Text;
+using System.Threading;
 using CSScripting;
 
 #if class_lib
@@ -106,6 +110,195 @@ namespace csscript
             }
         }
 
+#if !class_lib
+
+        internal static ((string index, int pid)[] scripts, string view) GetScriptProcessLog()
+        {
+            var result = new List<(string index, int pid)>();
+
+            var currentProcId = Process.GetCurrentProcess().Id;
+            var i = 0;
+
+            var builder = new StringBuilder();
+            builder.AppendLine($"#   | PID        | Arguments");
+            builder.AppendLine($"----------------------------");
+            foreach ((int pid, string args) in Runtime.GetScriptProcesses().OrderByDescending(x => x.pid == currentProcId))
+            {
+                builder.AppendLine($"{++i:D2} | {pid:D10} | {args}");
+                result.Add((i.ToString(), pid));
+            }
+
+            return (result.ToArray(), builder.ToString());
+        }
+
+        static (int pid, string args)[] GetScriptProcesses()
+        {
+            (int pid, string args)[] result = null;
+
+            var filePath = Environment.SpecialFolder.LocalApplicationData.GetPath().PathJoin("cs-script", "p-list");
+
+            if (DisableCSScriptProcessTrackingEnvar.GetEnvar().IsNotEmpty())
+            {
+                filePath.DeleteIfExists();
+                result = [(0, "<script tracking is disabled>")];
+            }
+            else
+            {
+                string mutexName = "Global\\CSScriptProcessListMutex"; // Global name for cross-process synchronization
+
+                List<string> lines = null;
+                using (var mutex = new Mutex(false, mutexName))
+                {
+                    try
+                    {
+                        mutex.WaitOne();
+
+                        try
+                        {
+                            if (filePath.FileExists())
+                                lines = File.ReadAllLines(filePath).ToList();
+                        }
+                        catch { }
+                    }
+                    finally
+                    {
+                        mutex.ReleaseMutex();
+                    }
+                }
+
+                if (lines == null)
+                    result = [(0, "<script tracking information is not available>")];
+                else
+                    result = lines.Select(x =>
+                                          {
+                                              var parts = x.Split(':', 2);
+                                              try
+                                              {
+                                                  if (int.TryParse(parts.First(), out int pid))
+                                                      return (pid, parts.Last()?.Trim());
+                                              }
+                                              catch
+                                              {
+                                              }
+                                              return (0, "<invalid script tracking information>");
+                                          })
+                                  .Where(x =>
+                                         {
+                                             try
+                                             {
+                                                 return Process.GetProcessById(x.Item1) != null;
+                                             }
+                                             catch { return false; }
+                                         })
+                                  .ToArray();
+            }
+
+            return result;
+        }
+
+        internal static void ClearScriptProcessLog()
+        {
+            var filePath = Environment.SpecialFolder.LocalApplicationData.GetPath().PathJoin("cs-script", "p-list");
+
+            if (DisableCSScriptProcessTrackingEnvar.GetEnvar().IsNotEmpty())
+            {
+                filePath.DeleteIfExists();
+            }
+            else
+            {
+                string mutexName = "Global\\CSScriptProcessListMutex"; // Global name for cross-process synchronization
+
+                using (var mutex = new Mutex(false, mutexName))
+                {
+                    try
+                    {
+                        mutex.WaitOne();
+
+                        List<string> lines = null;
+
+                        try
+                        {
+                            if (filePath.FileExists())
+                                lines = File.ReadAllLines(filePath)
+                                            .Where(x =>
+                                            {
+                                                try
+                                                {
+                                                    return Process.GetProcessById(int.Parse(x.Split(':', 2)[0])) != null;
+                                                }
+                                                catch { return false; }
+                                            })
+                                            .ToList();
+                        }
+                        catch { }
+
+                        if (lines != null)
+                            File.WriteAllLines(filePath, lines);
+                    }
+                    finally
+                    {
+                        mutex.ReleaseMutex();
+                    }
+                }
+            }
+        }
+
+        internal static string DisableCSScriptProcessTrackingEnvar = "DisableCSScriptProcessTracking";
+
+        internal static void LogScriptProcess()
+        {
+            var filePath = Environment.SpecialFolder.LocalApplicationData.GetPath().PathJoin("cs-script", "p-list");
+
+            if (DisableCSScriptProcessTrackingEnvar.GetEnvar().IsNotEmpty())
+            {
+                filePath.DeleteIfExists();
+            }
+            else
+            {
+                string mutexName = "Global\\CSScriptProcessListMutex"; // Global name for cross-process synchronization
+
+                using (var mutex = new Mutex(false, mutexName))
+                {
+                    try
+                    {
+                        mutex.WaitOne();
+                        filePath.EnsureFileDir();
+                        var currentScript = $"{Process.GetCurrentProcess().Id}: {Environment.CommandLine}";
+
+                        List<string> lines = null;
+
+                        try
+                        {
+                            if (filePath.FileExists())
+                                lines = File.ReadAllLines(filePath)
+                                            .Where(x =>
+                                            {
+                                                try
+                                                {
+                                                    return Process.GetProcessById(int.Parse(x.Split(':', 2)[0])) != null;
+                                                }
+                                                catch { return false; }
+                                            })
+                                            .ToList();
+                        }
+                        catch { }
+
+                        lines ??= [];
+
+                        lines.Add(currentScript);
+
+                        File.WriteAllLines(filePath, lines.ToArray());
+                    }
+                    finally
+                    {
+                        mutex.ReleaseMutex();
+                    }
+                }
+            }
+        }
+
+#endif
+
         /// <summary>
         /// Cleans the exited scripts.
         /// </summary>
@@ -132,6 +325,22 @@ namespace csscript
                         containerDir.DeleteIfExists();
                     }
                     catch { }
+            }
+        }
+
+        internal static bool IsConsole
+        {
+            get
+            {
+                try
+                {
+                    var test = Console.WindowWidth.ToString();
+                    return true;
+                }
+                catch
+                {
+                    return false;
+                }
             }
         }
 
@@ -184,32 +393,13 @@ namespace csscript
 
             foreach (string file in oldTempFiles)
             {
-                try
+                if (verifyPid)
                 {
-                    if (verifyPid)
-                    {
-                        string name = Path.GetFileName(file);
-
-                        int pos = name.IndexOf('.');
-
-                        if (pos > 0)
-                        {
-                            string pidValue = name.Substring(0, pos);
-
-                            int pid = 0;
-
-                            if (int.TryParse(pidValue, out pid))
-                            {
-                                //Didn't use GetProcessById as it throws if pid is not running
-                                if (Process.GetProcesses().Any(p => p.Id == pid))
-                                    continue; //still running
-                            }
-                        }
-                    }
-
-                    file.FileDelete(false);
+                    if (!file.IsParentProcessRunning())
+                        file.FileDelete(false);
                 }
-                catch { }
+                else
+                    file.FileDelete(false);
             }
         }
 
@@ -224,6 +414,45 @@ namespace csscript
         /// </summary>
         /// <value><c>true</c> if the host OS is Windows; otherwise, <c>false</c>.</value>
         public static bool IsWin => !IsLinux;
+
+#if !class_lib
+        static string rid;
+
+        public static string RID
+        {
+            get
+            {
+                if (rid.HasText())
+                    return rid;
+
+                // Determine OS Platform
+                string os;
+                if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                    os = "win";
+                else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+                    os = "linux";
+                else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+                    os = "osx";
+                else
+                    os = "unknown";
+
+                // Determine Architecture
+                string architecture = RuntimeInformation.OSArchitecture switch
+                {
+                    Architecture.X86 => "x86",
+                    Architecture.X64 => "x64",
+                    Architecture.Arm => "arm",
+                    Architecture.Arm64 => "arm64",
+                    _ => "unknown"
+                };
+
+                // Compose RID
+                rid = $"{os}-{architecture}";
+                return rid;
+            }
+        }
+
+#endif
 
         /// <summary>
         /// Note it is not about OS being exactly Linux but rather about OS having Linux type of
@@ -248,7 +477,6 @@ namespace csscript
         static internal string CustomCommandsDir
             => "CSSCRIPT_COMMANDS".GetEnvar() ??
                 Environment.SpecialFolder.CommonApplicationData.GetPath()
-
                                          .PathJoin("cs-script", "commands")
                                          .EnsureDir(false);
 

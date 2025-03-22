@@ -10,21 +10,12 @@ if exist "C:\Program Files\Microsoft Visual Studio\2022\%vs_edition%" (
 )
 
 set PATH=%PATH%;%%\out\ci\
-set target=net8.0
-set target7=net7.0
-md "out\Windows"
-md "out\Windows\lib"
+set target=net9.0
+set target_prev=net8.0
 md "out\Linux\"
 md "out\Linux\lib"
-md "out\Linux\-self"
-md "out\Linux\-self\-exe"
-md "out\Linux\-self\-test"
-md "out\Windows\-mkshim"
-md "out\Windows\-self"
-md "out\Windows\-self\-exe"
-md "out\Windows\-self\-test"
-md "out\Windows\-wdbg"
-md "out\Windows\-wdbg\dbg-server"
+md "out\Windows"
+md "out\Windows\lib"
 
 rem in case some content is already there
 del /S /Q "out\Linux\"
@@ -35,6 +26,14 @@ del "CSScriptLib\src\CSScriptLib\output\*.nupkg"
 del "CSScriptLib\src\CSScriptLib\output\*.snupkg"
 del "out\cs-script.win.7z"
 del "out\cs-script.linux.7z"
+
+if defined CSSCRIPT_ROOT (
+    echo Updating NuGet Tool package spec...
+    css .\out\ci\update_static_content.cs
+) 
+
+rem goto:exit
+rem goto:agregate
 
 echo =====================
 echo Building (cd: %cd%)
@@ -53,13 +52,16 @@ echo ----------------
 echo Building cscs.dll from %cd%
 echo ----------------
 
-dotnet publish -c Release -f %target7% -o "..\out\Windows\distros\net7" cscs.7.csproj
+dotnet publish -c Release -f %target_prev% -o "..\out\win.net8" cscs.8.csproj
+rd /s /q .\obj
 dotnet publish -c Release -f %target% -o "..\out\Windows\console" cscs.csproj
+
+rem goto:exit
 
 echo ----------------
 echo Building cs-script.cli .NET tool from %cd%
 echo ----------------
-del .\nupkg\*.*nupkg 
+if exist .\nupkg (del .\nupkg\*.*nupkg)
 dotnet pack cscs.csproj
 copy .\nupkg\*  ..\out\
 
@@ -79,7 +81,7 @@ cd ..\CSScriptLib\src\CSScriptLib
 echo ----------------
 echo Building CSScriptLib.dll from %cd%
 echo ----------------
-dotnet build -c Release
+dotnet build -c Release CSScriptLib.csproj
 
 cd ..\..\..
 
@@ -88,10 +90,10 @@ pushd .\
 cd .\out\static_content\-wdbg\dbg-server
 echo ----------------
 echo Building WDBG from %cd%
-dotnet publish -o .\output
+dotnet publish -o .\output server.csproj
 popd
 
-
+:agregate
 echo =====================
 echo Aggregating (cd: %cd%)
 echo ---------------------
@@ -102,25 +104,11 @@ del "out\Windows\*.pdb"
 rd "out\Windows\win" /S /Q
 rd "out\Windows\console" /S /Q
 
+rem .\static_content contains Linux and Win specific files
 copy "out\static_content\global-usings.cs" "out\Windows\lib\global-usings.cs" 
 copy "out\static_content\global-usings.cs" "out\Linux\lib\global-usings.cs"
 
-copy "out\static_content\-mkshim\*" "out\Windows\-mkshim\" 
-
-copy "out\static_content\-self\*" "out\Windows\-self\" 
-copy "out\static_content\-self\*" "out\Linux\-self\" 
-
-copy "out\static_content\-self\-exe\*" "out\Windows\-self\-exe\" 
-copy "out\static_content\-self\-alias\*" "out\Windows\-self\-alias\" 
-copy "out\static_content\-self\-exe\*" "out\Linux\-self\-exe\" 
-
-copy "out\static_content\-self\-test\*" "out\Windows\-self\-test\" 
-copy "out\static_content\-self\-test\*" "out\Linux\-self\-test\" 
-
-xcopy /s /q "out\static_content\-wdbg\*" "out\Windows\-wdbg\" 
-xcopy /s /q "out\static_content\-wdbg\*" "out\Linux\-wdbg\" 
-
-
+rem goto:exit
 echo =====================
 echo Clearing possible WDBG test/dev files
 echo (it's normal if files are not found)
@@ -136,10 +124,10 @@ copy "Tests.cscs\cli.cs" "out\Linux\-self\-test\cli.cs"
 copy "Tests.cscs\cli.cs" "out\Windows\-self\-test\cli.cs" 
 
 copy "out\static_content\readme.md" "out\Linux\readme.md" 
+copy "out\static_content\install.sh" "out\Linux\install.sh" 
 
 cd out\Windows
 
-rem .\cscs.exe -self-exe-build 
 
 echo =====================
 echo Aggregating packages (cd: %cd%)
@@ -158,14 +146,21 @@ echo cd: %cd%
 ..\ci\7z.exe a -r "..\cs-script.linux.7z" "*.*"
 cd ..\..
 
+cd out\win.net8
+echo cd: %cd%
+..\ci\7z.exe a -r "..\cs-script.win.net8.7z" "*.*"
+cd ..\..
+
 cd out\Windows
 echo cd: %cd%
-..\ci\7z.exe a -r "..\cs-script.win.7z" "*.*"
+
 echo ==========================================
-echo .\cscs -l:0 -mkshim css.exe cscs.exe
-.\cscs -l:0 -mkshim css.exe cscs.exe
+echo .\cscs -l:0 -c:0 -ng:csc -mkshim css.exe cscs.exe
+.\cscs -l:0 -c:0 -ng:csc -mkshim css.exe cscs.exe
 echo ==========================================
+
 ..\ci\7z.exe a -r "..\cs-script.win.zip" "*.*"
+..\ci\7z.exe a -r "..\cs-script.win.7z" "*.*"
 cd ..\..
 
 echo =====================
@@ -176,20 +171,26 @@ cd out\Windows
 .\cscs -c:0 ..\..\CSScriptLib\src\CSScriptLib\output\aggregate.cs
 .\cscs -engine:dotnet -code Console.WriteLine(Assembly.LoadFrom(#''cscs.dll#'').GetName().Version)
 .\cscs -engine:dotnet -code var version = Assembly.LoadFrom(#''cscs.dll#'').GetName().Version.ToString();#nFile.Copy(#''..\\cs-script.win.7z#'', $#''..\\cs-script.win.v{version}.7z#'', true);
+.\cscs -engine:dotnet -code var version = Assembly.LoadFrom(#''cscs.dll#'').GetName().Version.ToString();#nFile.Copy(#''..\\cs-script.win.net8.7z#'', $#''..\\cs-script.win.net8.v{version}.7z#'', true);
 .\cscs -engine:dotnet -code var version = Assembly.LoadFrom(#''cscs.dll#'').GetName().Version.ToString();#nFile.Copy(#''..\\cs-script.win.zip#'', $#''..\\cs-script.win.v{version}.zip#'', true);
 .\cscs -engine:dotnet -code var version = Assembly.LoadFrom(#''cscs.dll#'').GetName().Version.ToString();#nFile.Copy(#''..\\cs-script.linux.7z#'', $#''..\\cs-script.linux.v{version}.7z#'', true);
-.\cscs -help cli:md > ..\CS-Script---Command-Line-Interface.md
+@REM md ..\..\..\cs-script.wiki
+.\cscs -help cli:md > ..\..\..\..\cs-script.wiki\CS-Script---Command-Line-Interface.md
+.\cscs -help syntax:md > ..\..\..\..\cs-script.wiki\Script-Syntax.md
+
 cd ..\..
 
 move "CSScriptLib\src\CSScriptLib\output\*.nupkg" ".\out"
 move "CSScriptLib\src\CSScriptLib\output\*.snupkg" ".\out"
 
 del out\cs-script.win.7z
+del out\cs-script.win.net8.7z
 del out\cs-script.linux.7z
 
 echo Updating help.txt
-.\out\Windows\cscs.exe -? > ..\help.txt 
+.\out\Windows\cscs.exe -help > ..\help.txt 
 
-rem echo Published: %cd%
+
+echo Published: %cd%
 rem cd ..\..\.
 :exit 

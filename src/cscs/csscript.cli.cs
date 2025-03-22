@@ -1,12 +1,14 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Diagnostics;
 using static System.Environment;
 using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text;
 using CSScripting;
+using static CSScripting.CSSUtils;
 
 namespace csscript
 {
@@ -136,11 +138,16 @@ namespace csscript
                 {
                     if (outFile.IsNotEmpty())
                     {
+                        if (appType == "cmd" && !outFile.StartsWith("-"))
+                            outFile = "-" + outFile;
+
                         if (appType == "cmd" && outFile.GetDirName().IsEmpty())
                         {
-                            // the command output file specified by command name only
-                            var cmdDir = Runtime.CustomCommandsDir.PathJoin("-" + outFile).EnsureDir();
-                            outFile = cmdDir.PathJoin("-run.cs");
+                            var prefix = new string(outFile.TakeWhile(x => x == '-').ToArray());
+                            var subDirs = prefix + outFile.TrimStart('-').Split('-').JoinBy(Path.DirectorySeparatorChar + "-");// Select(x => "-" + x).ToArray();
+
+                            outFile = Runtime.CustomCommandsDir.PathJoin(subDirs).PathJoin("-run.cs");
+                            outFile.EnsureFileDir();
                         }
 
                         string file;
@@ -157,8 +164,15 @@ namespace csscript
 
                         file = file.GetFullPath().EnsureFileDir();
 
-                        print?.Invoke($"Created: {outFile}");
+                        print?.Invoke($"Created: {Path.GetRelativePath(Environment.CurrentDirectory, file)}");
                         File.WriteAllText(file, sample.Code);
+
+                        if (appType == "cmd")
+                        {
+                            var fileDir = file.GetDirName();
+                            if (Directory.GetFiles(fileDir, "*.version").IsEmpty())
+                                File.WriteAllText(Path.Combine(fileDir, "1.0.0.version"), "");
+                        }
                     }
                     else
                     {
@@ -244,7 +258,75 @@ namespace csscript
         /// </summary>
         public void ShowHelp(string helpType, params object[] context)
         {
-            print?.Invoke(HelpProvider.ShowHelp(helpType, context.Where(x => x != null).ToArray()));
+            var help = HelpProvider.ShowHelp(helpType, context.Concat([print]).Where(x => x != null).ToArray());
+            print?.Invoke(help);
+        }
+
+        /// <summary>
+        /// Prints CS-Script specific C# syntax help info.
+        /// </summary>
+        public void InteractiveCommand(string cmdType, params object[] context) => Command(cmdType, context);
+
+        public static void Command(string cmdType, params object[] context)
+        {
+            switch (cmdType)
+            {
+                case AppArgs.ls:
+                case AppArgs.list:
+                    {
+                        if (!Runtime.IsConsole)
+                        {
+                            print?.Invoke($"Command '{cmdType}' is only available in the console mode.");
+                        }
+                        else
+                        {
+                            var result = Runtime.GetScriptProcessLog();
+
+                            if (result.scripts.IsEmpty())
+                            {
+                                Console.WriteLine("No running scripts found.");
+                            }
+                            else
+                            {
+                                if (context.Contains("kill") || context.Contains("-kill") || context.Contains("k"))
+                                {
+                                    if (context.Contains("*"))
+                                    {
+                                        foreach (var pid in result.scripts.Select(x => x.pid).Where(x => x != 0))
+                                            try { Process.GetProcessById(pid).Kill(); }
+                                            catch { }
+                                    }
+                                    else
+                                    {
+                                        if (result.scripts.Any())
+                                        {
+                                            Console.WriteLine(result.view);
+                                            Console.WriteLine("Enter index of the script process you want to terminate or '*' to terminate them all:");
+                                            var userInput = Console.ReadLine().ToLower();
+                                            if (userInput != "x")
+                                            {
+                                                var pid = result.scripts.FirstOrDefault(x => x.index == userInput).pid;
+                                                if (pid != 0)
+                                                    try
+                                                    {
+                                                        Process.GetProcessById(pid).Kill();
+                                                    }
+                                                    catch { }
+                                                else
+                                                    Console.WriteLine("Invalid user input.");
+                                            }
+                                        }
+                                    }
+                                }
+                                else
+                                    Console.WriteLine(result.view);
+                            }
+                        }
+                        break;
+                    }
+                default:
+                    break;
+            }
         }
 
         public void EnableWpf(string arg)
@@ -255,19 +337,27 @@ namespace csscript
 
         void EnableWpf(string arg, string configFile, bool primaryConfig)
         {
-            const string console_type = "\"name\": \"Microsoft.NETCore.App\"";
-            const string win_type = "\"name\": \"Microsoft.WindowsDesktop.App\"";
+            if (configFile.FileExists())
+            {
+                const string console_type = "\"name\": \"Microsoft.NETCore.App\"";
+                const string win_type = "\"name\": \"Microsoft.WindowsDesktop.App\"";
 
-            var content = File.ReadAllText(configFile);
+                var content = File.ReadAllText(configFile);
 
-            if (arg == "enable" || arg == "1")
-                content = content.Replace(console_type, win_type);
-            else if (arg == "disable" || arg == "0")
-                content = content.Replace(win_type, console_type);
+                if (arg == "enable" || arg == "1")
+                    content = content.Replace(console_type, win_type);
+                else if (arg == "disable" || arg == "0")
+                    content = content.Replace(win_type, console_type);
 
-            File.WriteAllText(configFile, content);
-            if (primaryConfig)
-                CSExecutor.print($"WPF support is {(content.Contains(win_type) ? "enabled" : "disabled")}");
+                File.WriteAllText(configFile, content);
+                if (primaryConfig)
+                    CSExecutor.print($"WPF support is {(content.Contains(win_type) ? "enabled" : "disabled")}");
+            }
+            else
+            {
+                if (primaryConfig)
+                    CSExecutor.print($"WPF support is not available as the runtime configuration file is missing: {configFile}");
+            }
         }
     }
 }

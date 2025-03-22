@@ -1,9 +1,9 @@
-using csscript;
-using CSScripting;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using csscript;
+using CSScripting;
 
 namespace CSScriptLib
 {
@@ -126,6 +126,7 @@ namespace CSScriptLib
         public string[] ResolvePackages(bool suppressDownloading = false)
         {
 #if !class_lib
+
             return NuGet.Resolve(Packages, suppressDownloading, this.ScriptPath);
 #else
             return new string[0];
@@ -230,8 +231,11 @@ namespace CSScriptLib
             foreach (string opt in mainFile.CompilerOptions)
                 PushCompilerOptions(opt);
 
-            var dirs = new List<string>();
-            dirs.Add(Path.GetDirectoryName(mainFile.fileName));//note: mainFile.fileName is warrantied to be a full name but fileName is not
+            var dirs = new List<string>
+            {
+                Path.GetDirectoryName(mainFile.fileName)//note: mainFile.fileName is warrantied to be a full name but fileName is not
+            };
+
             if (searchDirs != null)
                 dirs.AddRange(searchDirs);
 
@@ -295,12 +299,14 @@ namespace CSScriptLib
                         foreach (string file in importedFile.IgnoreNamespaces)
                             PushIgnoreNamespace(file);
 
-                        List<string> dirs = new List<string>(this.SearchDirs);
+                        var dirs = new List<string>(this.SearchDirs);
                         foreach (string dir in importedFile.ExtraSearchDirs)
+                        {
                             if (Path.IsPathRooted(dir))
                                 dirs.Add(Path.GetFullPath(dir));
                             else
                                 dirs.Add(Path.Combine(Path.GetDirectoryName(importedFile.fileName), dir));
+                        }
 
                         this.SearchDirs = dirs.ToArray();
                     }
@@ -428,7 +434,7 @@ namespace CSScriptLib
             }
         }
 
-        void AddIfNotThere(List<string> list, string item)
+        static void AddIfNotThere(List<string> list, string item)
         {
             if (list.BinarySearch(item, new StringComparer()) < 0)
                 list.Add(item);

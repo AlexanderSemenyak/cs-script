@@ -1,12 +1,21 @@
-# Release v4.8.17.0
+# Release v4.9.4.1
 
 ---
 
 ## Changes
 
 ### CLI
-- #378: Bump Request -> Microsoft.CodeAnalysis.CSharp.Scripting 4.10.0
 
+v4.9.4.0 functionality
+
+- #406: Custom DLL (CommandGathering.dll) Fails Compile-Time Namespace Resolution with //css_ref
+- Improved `css -cmd` UX when generating custom commands descriptions.
+- Updated custom commands `-pkill` to allow killing the process by PID.
+- Added custom commands:
+  - `-runas`
+  - `-which`
+  - `-who`
 
 ### CSScriptLib
-- #378: Bump Request -> Microsoft.CodeAnalysis.CSharp.Scripting 4.10.0
+
+- no changes

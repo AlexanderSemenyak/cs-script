@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Xml.Linq;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using csscript;
@@ -45,7 +46,7 @@ public static class CLIExtensions
             }
         }
 
-        yield return str.Substring(nextPiece);
+        yield return str[nextPiece..];
     }
 
     // [Obsolete]
@@ -67,6 +68,9 @@ public static class CLIExtensions
 
     public static bool StartsWith(this string text, string pattern, bool ignoreCase) =>
         text.StartsWith(pattern, ignoreCase ? StringComparison.OrdinalIgnoreCase : default(StringComparison));
+
+    public static string TakeMax(this string text, int maxCharacters) =>
+        text.Substring(0, Math.Min(100, text.Length));
 
     public static string GetTargetPlatform(this CompilerParameters compilerParams)
     {
@@ -101,7 +105,7 @@ public static class CLIExtensions
 
                                      isEscaping = false;
 
-                                     return !inQuotes && Char.IsWhiteSpace(c)/*c == ' '*/;
+                                     return !inQuotes && c.IsWhiteSpace()/*c == ' '*/;
                                  })
                           .Select(arg => arg.Trim().TrimMatchingQuotes('\"').Replace("\\\"", "\""))
                           .Where(arg => !string.IsNullOrEmpty(arg))

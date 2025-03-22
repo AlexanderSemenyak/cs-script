@@ -292,6 +292,19 @@ namespace CSScripting
                 Console.WriteLine(message);
         }
 
+        internal static string FromMdToTxt(this string message)
+        {
+            return message
+                .Replace("&lt;", "<")
+                .Replace("&gt;", ">")
+                .Replace("**_", "")
+                .Replace("_**", "")
+                .Replace("```C#", "")
+                .Replace("```txt", "")
+                .Replace("`", "")
+                .Replace("&#96;", "`");
+        }
+
         public static string DbgInjectionCode = DbgInjectionCodeInterface;
 
         internal static string DbgInjectionCodeInterface = @"// Auto-generated file
@@ -337,7 +350,7 @@ partial class dbg
 
             string dbg_injection_version = DbgInjectionCode.GetHashCode().ToString();
 
-            using SystemWideLock fileLock = new SystemWideLock("CS-Script.dbg.injection", dbg_injection_version);
+            using var fileLock = new SystemWideLock("CS-Script.dbg.injection", dbg_injection_version);
 
             //Infinite timeout is not good choice here as it may block forever but continuing while the file is still locked will
             //throw a nice informative exception.
@@ -472,7 +485,7 @@ class HostingRuntime
 
         internal static string GetScriptedCodeAttributeInjectionCode(string scriptFileName)
         {
-            using SystemWideLock fileLock = new SystemWideLock(scriptFileName, "attr");
+            using var fileLock = new SystemWideLock(scriptFileName, "attr");
 
             //Infinite timeout is not good choice here as it may block forever but continuing while the file is still locked will
             //throw a nice informative exception.
@@ -505,9 +518,8 @@ class HostingRuntime
                         if (!Directory.Exists(dir))
                             Directory.CreateDirectory(dir);
 
-                        using (var sw = new StreamWriter(file)) //there were reports about the files being locked. Possibly by csc.exe so allow retry
-
-                            sw.Write(code);
+                        using var sw = new StreamWriter(file); //there were reports about the files being locked. Possibly by csc.exe so allow retry
+                        sw.Write(code);
                     }
                     break;
                 }
@@ -526,9 +538,8 @@ class HostingRuntime
 
         public static bool HaveSameTimestamp(string file1, string file2)
         {
-            FileInfo info1 = new FileInfo(file1);
-
-            FileInfo info2 = new FileInfo(file2);
+            var info1 = new FileInfo(file1);
+            var info2 = new FileInfo(file2);
 
             return (info2.LastWriteTime == info1.LastWriteTime &&
                     info2.LastWriteTimeUtc == info1.LastWriteTimeUtc);
@@ -536,8 +547,8 @@ class HostingRuntime
 
         public static void SetTimestamp(string fileDest, string fileSrc)
         {
-            FileInfo info1 = new FileInfo(fileSrc);
-            FileInfo info2 = new FileInfo(fileDest);
+            var info1 = new FileInfo(fileSrc);
+            var info2 = new FileInfo(fileDest);
 
             try
             {
@@ -611,15 +622,15 @@ class HostingRuntime
         {
             static internal string Join(params string[] args)
             {
-                StringBuilder sb = new StringBuilder();
+                var sb = new StringBuilder();
 
                 foreach (string arg in args)
                 {
                     if (arg.IsNotEmpty())
                     {
-                        sb.Append(" ");
-                        sb.Append("-");
-                        sb.Append(arg);
+                        sb.Append(' ')
+                          .Append('-')
+                          .Append(arg);
                     }
                 }
                 return sb.ToString().Trim();
@@ -640,7 +651,7 @@ class HostingRuntime
             {
                 foreach (string pattern in patterns)
                 {
-                    if (arg.StartsWith("-"))
+                    if (arg.StartsWith('-'))
                         if (arg.Length == pattern.Length + 1 && arg.IndexOf(pattern) == 1)
                             return true;
 
@@ -662,7 +673,7 @@ class HostingRuntime
 
             public static bool StartsWith(string arg, string pattern)
             {
-                if (arg.StartsWith("-"))
+                if (arg.StartsWith('-'))
                     return arg.IndexOf(pattern) == 1;
                 if (Runtime.IsWin)
                     if (arg[0] == '/')
@@ -694,8 +705,6 @@ class HostingRuntime
 
             public static bool ParseValuedArg(string arg, string pattern, string pattern2, out string value)
             {
-                value = null;
-
                 if (ParseValuedArg(arg, pattern, out value))
                     return true;
 
@@ -751,7 +760,7 @@ class HostingRuntime
 
                 if (Args.IsArg(arg) && AppArgs.Supports(arg) && AppArgs.IsHelpRequest(nextArg))
                 {
-                    executor.ShowHelpFor(arg.Substring(1)); //skip prefix
+                    executor.ShowHelpFor(arg[1..]); //skip prefix
                     CLIExitRequest.Throw();
                 }
 
@@ -971,7 +980,7 @@ class HostingRuntime
                     }
                     else if (Args.Same(arg, AppArgs.vs, AppArgs.vscode)) // -vs, -vscode
                     {
-                        options.nonExecuteOpRquest = arg.Substring(1);
+                        options.nonExecuteOpRquest = arg[1..];
                         options.processFile = false;
                     }
                     else if (Args.ParseValuedArg(arg, AppArgs.proj, out argValue)) // -proj
@@ -1045,6 +1054,7 @@ class HostingRuntime
                             options.forceCompile = true;
                             options.suppressExecution = true;
                             options.syntaxCheck = true;
+                            options.compileDLL = true;
                         }
                         else
                         {
@@ -1101,9 +1111,14 @@ class HostingRuntime
                         executor.ShowHelp(AppArgs.syntax, nextArg);
                         CLIExitRequest.Throw();
                     }
-                    else if (Args.Same(arg, AppArgs.cmd, AppArgs.commands)) // -cmd -commands
+                    else if (Args.ParseValuedArg(arg, AppArgs.cmd, AppArgs.commands, out argValue)) // -cmd:x -commands:x
                     {
-                        executor.ShowHelp(AppArgs.commands);
+                        executor.ShowHelp(AppArgs.commands, argValue);
+                        CLIExitRequest.Throw();
+                    }
+                    else if (Args.Same(arg, AppArgs.ls, AppArgs.list)) // -ls -list
+                    {
+                        executor.InteractiveCommand(AppArgs.list, nextArg, secondNextArg);
                         CLIExitRequest.Throw();
                     }
                     else if (Args.ParseValuedArg(arg, AppArgs.s, AppArgs.sample, out argValue)) // -s:<C# version>
@@ -1138,18 +1153,22 @@ class HostingRuntime
 
         internal static PrecompilationContext Precompile(string scriptFile, string[] filesToCompile, ExecuteOptions options)
         {
-            PrecompilationContext context = new PrecompilationContext();
-            context.SearchDirs = options.searchDirs;
+            var context = new PrecompilationContext
+            {
+                SearchDirs = options.searchDirs
+            };
 
-            Hashtable contextData = new Hashtable();
-            contextData["NewDependencies"] = context.NewDependencies;
-            contextData["NewSearchDirs"] = context.NewSearchDirs;
-            contextData["NewReferences"] = context.NewReferences;
-            contextData["NewIncludes"] = context.NewIncludes;
-            contextData["NewCompilerOptions"] = "";
-            contextData["SearchDirs"] = context.SearchDirs;
-            contextData["ConsoleEncoding"] = options.consoleEncoding;
-            contextData["CompilerOptions"] = options.compilerOptions;
+            Hashtable contextData = new()
+            {
+                ["NewDependencies"] = context.NewDependencies,
+                ["NewSearchDirs"] = context.NewSearchDirs,
+                ["NewReferences"] = context.NewReferences,
+                ["NewIncludes"] = context.NewIncludes,
+                ["NewCompilerOptions"] = "",
+                ["SearchDirs"] = context.SearchDirs,
+                ["ConsoleEncoding"] = options.consoleEncoding,
+                ["CompilerOptions"] = options.compilerOptions
+            };
 
             Dictionary<string, List<object>> precompilers = CSSUtils.LoadPrecompilers(options);
 
@@ -1198,7 +1217,7 @@ class HostingRuntime
                                     if (!method_dynamic.IsStatic)
                                         compiler = Activator.CreateInstance(method_dynamic.DeclaringType);
 
-                                    result = (bool)method_dynamic.Invoke(compiler, new object[] { context });
+                                    result = (bool)method_dynamic.Invoke(compiler, [context]);
 
                                     if (result)
                                         content = context.Content;
@@ -1257,10 +1276,10 @@ class HostingRuntime
 
         internal static Dictionary<string, List<object>> LoadPrecompilers(ExecuteOptions options)
         {
-            Dictionary<string, List<object>> retval = new Dictionary<string, List<object>>();
+            Dictionary<string, List<object>> retval = [];
 
             if (!options.preCompilers.StartsWith(noDefaultPrecompilerSwitch)) //no defaults
-                retval.Add(Assembly.GetExecutingAssembly().Location, new List<object>() { new DefaultPrecompiler() });
+                retval.Add(Assembly.GetExecutingAssembly().Location, [new DefaultPrecompiler()]);
 
             if (options.autoClass)
             {
@@ -1272,19 +1291,17 @@ class HostingRuntime
                 if (retval.ContainsKey(Assembly.GetExecutingAssembly().Location))
                     retval[Assembly.GetExecutingAssembly().Location].Add(new AutoclassPrecompiler());
                 else
-                    retval.Add(Assembly.GetExecutingAssembly().Location, new List<object>() { new AutoclassPrecompiler() });
+                    retval.Add(Assembly.GetExecutingAssembly().Location, [new AutoclassPrecompiler()]);
             }
 
-            foreach (string precompiler in options.preCompilers.Split(new char[] { ',' }).Distinct())
+            foreach (string precompiler in options.preCompilers.Split([',']).Distinct())
             {
                 string precompilerFile = precompiler.Trim();
 
                 if (precompilerFile != "" && precompilerFile != noDefaultPrecompilerSwitch)
                 {
-                    string sourceFile = FindImlementationFile(precompilerFile, options.searchDirs);
-
-                    if (sourceFile == null)
-                        throw new ApplicationException("Cannot find Precompiler file " + precompilerFile);
+                    string sourceFile = FindImlementationFile(precompilerFile, options.searchDirs)
+                        ?? throw new ApplicationException("Cannot find Precompiler file " + precompilerFile);
 
                     Assembly asm;
 
@@ -1331,7 +1348,7 @@ class HostingRuntime
                     }
 
                     if (precompilerObj != null)
-                        retval.Add(sourceFile, new List<object>() { precompilerObj });
+                        retval.Add(sourceFile, [precompilerObj]);
                 }
             }
 
@@ -1360,9 +1377,8 @@ class HostingRuntime
 
             if (retval == null && !Path.HasExtension(file))
             {
-                retval = FindFile(file + ".cs", searchDirs);
-                if (retval == null)
-                    retval = FindFile(file + ".dll", searchDirs);
+                retval = FindFile(file + ".cs", searchDirs) ??
+                         FindFile(file + ".dll", searchDirs);
             }
 
             return retval;
@@ -1386,7 +1402,7 @@ class HostingRuntime
 
         internal static string[] CollectPrecompillers(CSharpParser parser, ExecuteOptions options)
         {
-            List<string> allPrecompillers = new List<string>();
+            List<string> allPrecompillers = [];
 
             allPrecompillers.AddRange(options.preCompilers.Split(','));
 
@@ -1406,14 +1422,14 @@ class HostingRuntime
             {
                 if (file != "")
                 {
-                    sb.Append(FindImlementationFile(file, options.searchDirs));
-                    sb.Append(",");
+                    sb.Append(FindImlementationFile(file, options.searchDirs))
+                      .Append(',');
                 }
             }
 
-            sb.Append(",");
-            sb.Append(options.compilerOptions); // parser.CompilerOptions can be ignored as if they are changed the whole script timestamp is also changed
-            sb.Append(string.Join("|", options.searchDirs)); // "Incorrect work of cache #86"
+            sb.Append(',')
+              .Append(options.compilerOptions) // parser.CompilerOptions can be ignored as if they are changed the whole script timestamp is also changed
+              .Append(string.Join("|", options.searchDirs)); // "Incorrect work of cache #86"
 
             return sb.ToString().GetHashCodeEx();
         }
@@ -1435,7 +1451,7 @@ class HostingRuntime
                 var asmExtension = ".dll";
                 string precompilerAsm = Path.Combine(CSExecutor.GetCacheDirectory(sourceFile), Path.GetFileName(sourceFile) + asmExtension);
 
-                using Mutex fileLock = new Mutex(false, "CSSPrecompiling." + precompilerAsm.GetHashCodeEx()); //have to use hash code as path delimiters are illegal in the mutex name
+                using var fileLock = new Mutex(false, "CSSPrecompiling." + precompilerAsm.GetHashCodeEx()); //have to use hash code as path delimiters are illegal in the mutex name
 
                 //let other thread/process (if any) to finish loading/compiling the same file; 3 seconds should be enough
                 //if not we will just fail to compile as precompilerAsm will still be locked.
@@ -1460,7 +1476,7 @@ class HostingRuntime
                 compilerParams.GenerateInMemory = false;
                 compilerParams.OutputAssembly = precompilerAsm;
 
-                List<string> refAssemblies = new List<string>();
+                List<string> refAssemblies = [];
 
                 //add local and global assemblies (if found) that have the same assembly name as a namespace
                 foreach (string nmSpace in parser.ReferencedNamespaces)
@@ -1471,7 +1487,7 @@ class HostingRuntime
 
                 //add assemblies referenced from code
                 foreach (string asmName in parser.ReferencedAssemblies)
-                    if (asmName.StartsWith("\"") && asmName.EndsWith("\"")) //absolute path
+                    if (asmName.StartsWith('"') && asmName.EndsWith('"')) //absolute path
                     {
                         //not-searchable assemblies
                         string asm = asmName.Replace("\"", "");
@@ -1595,7 +1611,7 @@ class HostingRuntime
             if (File.Exists(autogenFile))
                 File.SetAttributes(autogenFile, FileAttributes.Normal);
 
-            using (StreamWriter sw = new StreamWriter(autogenFile, false, Encoding.UTF8))
+            using (var sw = new StreamWriter(autogenFile, false, Encoding.UTF8))
                 sw.Write(content);
 
             File.SetAttributes(autogenFile, FileAttributes.ReadOnly);
@@ -1604,14 +1620,14 @@ class HostingRuntime
 
         public static string GenerateAutoclass(string file)
         {
-            StringBuilder code = new StringBuilder(4096);
+            StringBuilder code = new(4096);
             code.AppendLine("//Auto-generated file");
 
             bool headerProcessed = false;
 
             string line;
 
-            using (StreamReader sr = new StreamReader(file, Encoding.UTF8))
+            using (StreamReader sr = new(file, Encoding.UTF8))
                 while ((line = sr.ReadLine()) != null)
                 {
                     if (!headerProcessed && !line.TrimStart().StartsWith("using ")) //not using...; statement of the file header
@@ -1657,8 +1673,15 @@ class HostingRuntime
     /// data attached. </summary>
     internal class MetaDataItems
     {
+        public static string AsDirPath(string path) => "dir:" + path;
+
         public class MetaDataItem
         {
+            public static bool IsDirPath(string path) => path.StartsWith("dir:");
+
+            public bool IsDir => IsDirPath(file);
+            public string Path => IsDir ? file.Substring("dir:".Length) : file;
+
             public MetaDataItem(string file, DateTime date, bool assembly)
             {
                 this.file = file;
@@ -1671,7 +1694,7 @@ class HostingRuntime
             public bool assembly;
         }
 
-        public List<MetaDataItem> items = new List<MetaDataItem>();
+        public List<MetaDataItem> items = [];
 
         static public bool IsOutOfDate(string script, string assembly)
         {
@@ -1685,7 +1708,8 @@ class HostingRuntime
 
                 string dependencyFile = "";
 
-                foreach (MetaDataItem item in depInfo.items)
+                // check only files that are not dirs to be added to PATH envar are current
+                foreach (MetaDataItem item in depInfo.items.Where(x => !x.IsDir))
                 {
                     if (item.assembly && Path.IsPathRooted(item.file)) //is absolute path
                     {
@@ -1700,6 +1724,13 @@ class HostingRuntime
                         return true;
                     }
                 }
+
+                depInfo.items
+                    .Where(x => x.IsDir)
+                    .Select(x => x.file.Substring("dir:".Length))
+                    .ToArray()
+                    .AddToSystemPath();
+
                 return false;
             }
             else
@@ -1715,7 +1746,7 @@ class HostingRuntime
 
         public string[] AddItems(string[] files, bool isAssembly, string[] searchDirs)
         {
-            List<string> newProbingDirs = new List<string>();
+            List<string> newProbingDirs = [];
 
             if (isAssembly)
             {
@@ -1772,8 +1803,11 @@ class HostingRuntime
             }
             else
             {
-                foreach (string file in files)
-                    AddItem(file, File.GetLastWriteTimeUtc(file), false);
+                foreach (string item in files)
+                    if (MetaDataItem.IsDirPath(item))
+                        AddItem(item, DateTime.UtcNow, false);
+                    else
+                        AddItem(item, File.GetLastWriteTimeUtc(item), false);
             }
             return newProbingDirs.ToArray();
         }
@@ -1791,7 +1825,7 @@ class HostingRuntime
 
             try
             {
-                using FileStream fs = new FileStream(file, FileMode.Open);
+                using FileStream fs = new(file, FileMode.Open);
 
                 fs.Seek(0, SeekOrigin.End);
 
@@ -1887,16 +1921,16 @@ class HostingRuntime
 
         string Serialize()
         {
-            StringBuilder bs = new StringBuilder();
+            StringBuilder bs = new();
 
             foreach (MetaDataItem fileInfo in items)
             {
-                bs.Append(fileInfo.file);
-                bs.Append(";");
-                bs.Append(fileInfo.date.ToFileTimeUtc().ToString());
-                bs.Append(";");
-                bs.Append(fileInfo.assembly ? "Y" : "N");
-                bs.Append("|");
+                bs.Append(fileInfo.file)
+                  .Append(';')
+                  .Append(fileInfo.date.ToFileTimeUtc())
+                  .Append(';')
+                  .Append(fileInfo.assembly ? 'Y' : 'N')
+                  .Append('|');
             }
             return bs.ToString();
         }
@@ -1920,7 +1954,7 @@ class HostingRuntime
 
         int stampID = Assembly.GetExecutingAssembly().FullName.Split(",".ToCharArray())[1].GetHashCodeEx();
 
-        bool IsGACAssembly(string file)
+        static bool IsGACAssembly(string file)
         {
             string s = file.ToLower();
             return s.Contains("microsoft.net\\framework") || s.Contains("microsoft.net/framework") || s.Contains("gac_msil") || s.Contains("gac_64") || s.Contains("gac_32");
@@ -1931,7 +1965,7 @@ class HostingRuntime
 
     internal class Cache
     {
-        static void deleteFile(string path)
+        static void DeleteFile(string path)
         {
             try
             {
@@ -1941,12 +1975,12 @@ class HostingRuntime
             catch { }
         }
 
-        static void deleteDir(string path)
+        static void DeleteDir(string path)
         {
             try
             {
                 foreach (string file in Directory.GetFiles(path))
-                    deleteFile(file);
+                    DeleteFile(file);
                 Directory.Delete(path);
             }
             catch { }
@@ -1976,7 +2010,7 @@ class HostingRuntime
 
         static string Do(Op operation)
         {
-            StringBuilder result = new StringBuilder();
+            StringBuilder result = new();
             result.AppendLine("Cache root: " + Runtime.CacheDir);
             if (operation == Op.List)
                 result.AppendLine("Listing cache items:");
@@ -1998,7 +2032,7 @@ class HostingRuntime
                     {
                         result.AppendLine(cachName + ":\tUNKNOWN");
                         if (operation == Op.Trim || operation == Op.Clear)
-                            deleteDir(cacheDir);
+                            DeleteDir(cacheDir);
                     }
                     else
                     {
@@ -2011,14 +2045,14 @@ class HostingRuntime
                         else if (operation == Op.Clear)
                         {
                             result.AppendLine(cachName + ":\t" + sourceDir);
-                            deleteDir(cacheDir);
+                            DeleteDir(cacheDir);
                         }
                         else if (operation == Op.Trim)
                         {
                             if (!Directory.Exists(sourceDir))
                             {
                                 result.AppendLine(cachName + ":\t" + sourceDir);
-                                deleteDir(cacheDir);
+                                DeleteDir(cacheDir);
                             }
                             else
                             {
@@ -2035,12 +2069,12 @@ class HostingRuntime
                                     {
                                         result.AppendLine(cachName + ":\t" + scriptFile);
                                         foreach (string cacheFile in Directory.GetFiles(cacheDir, baseName + ".*"))
-                                            deleteFile(cacheFile);
+                                            DeleteFile(cacheFile);
 
                                         string[] leftOvers = Directory.GetFiles(cacheDir);
 
                                         if (leftOvers.Length == 0 || (leftOvers.Length == 1 && leftOvers[0].EndsWith("css_info.txt")))
-                                            deleteDir(cacheDir);
+                                            DeleteDir(cacheDir);
                                     }
                                 }
                             }

@@ -50,7 +50,7 @@ jobs:
 
     strategy:
       matrix:
-        configuration: [Debug, Release]
+        configuration: [Release]
 
     runs-on: windows-latest  # For a list of available runner types, refer to
                              # https://help.github.com/en/actions/reference/workflow-syntax-for-github-actions#jobsjob_idruns-on
@@ -70,7 +70,15 @@ jobs:
     - name: Install .NET Core
       uses: actions/setup-dotnet@v3
       with:
-        dotnet-version: 8.0.x
+        dotnet-version: 9.0.x
+
+    # - name: Locate `sn.exe`
+    #   run: |
+    #     where sn.exe
+    #     sn -?
+
+    - name: Add `sn.exe` to PATH
+      run: echo "C:\Program Files (x86)\Microsoft SDKs\Windows\v10.0A\bin\NETFX 4.8 Tools" >> $env:GITHUB_PATH
 
     # Add  MSBuild to the PATH: https://github.com/microsoft/setup-msbuild
     - name: Setup MSBuild.exe
@@ -79,13 +87,19 @@ jobs:
     - name: Restore the application
       run: dotnet restore $env:Solution_Name
     
+    - name: Prepare signing keys
+      run: ./prepare-environment.cmd
+      working-directory: src
+
     - name: Build the solution
       run: ./1.build-release.cmd
       working-directory: src
 
-    - name: Test the solution
-      run: ./2.run-tests-ci.cmd
-      working-directory: src
+    # disable as the test includes distro files that are normally aggregated with css.exe before the build. 
+    # Though installing css.exe ais an option for the future improvements
+    # - name: Test the solution
+    #   run: ./2.run-tests-ci.cmd
+    #   working-directory: src
 
     # - name: Build the solution
     #   run: dotnet build $env:Solution_Name

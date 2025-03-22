@@ -51,7 +51,8 @@ namespace csscript
             return process;
         }
 
-        internal static int Run(this string exe, string args, string dir = null, Action<string> onOutput = null, Action<string> onError = null, int timeout = -1, string buildArtifact = null)
+        internal static int Run(this string exe, string args, string dir = null, Action<string> onOutput = null,
+            Action<string> onError = null, int timeout = -1, bool terminateOnTimeout = true, string buildArtifact = null)
         {
             var process = InitProc(exe, args, dir);
 
@@ -68,7 +69,8 @@ namespace csscript
             var output = process.StandardOutput.ReadToEnd();
             onOutput?.Invoke(output);
 
-            process.Start(); // important to call even if it is already started, otherwise WLS2 fails to catch the output
+            // disabling it as it actually starts another instance of the process. It was a clumsy work around at a stage
+            // process.Start(); // important to call even if it is already started, otherwise WLS2 fails to catch the output
 
             if (buildArtifact.HasText())
             {
@@ -103,10 +105,14 @@ namespace csscript
             {
                 if (timeout != -1) // of course it is not -1 if we are here :)
                     onOutput?.Invoke($"Process '{exe}' is taking too long to finish. Terminating it forcefully.");
-                try { process.Kill(); } catch { }
+
+                if (terminateOnTimeout)
+                    try { process.Kill(); } catch { }
+
+                // return typical timeout code for CLI apps
+                return -1;
             }
 
-            // try { error.Abort(); } catch { } try { output.Abort(); } catch { }
             return process.ExitCode;
         }
 
@@ -213,6 +219,10 @@ namespace csscript
         /// <param name="path">The path.</param>
         /// <returns><c>true</c> if [is shared assembly] [the specified path]; otherwise, <c>false</c>.</returns>
         internal static bool IsSharedAssembly(this string path) => path.StartsWith(sdk_root, StringComparison.OrdinalIgnoreCase);
+
+        internal static bool IsPossibleFacadeAssembly(this string path) => SharedAssembliesNames.Contains(path.GetFileName());
+
+        internal static string[] SharedAssembliesNames => Directory.GetFiles(sdk_root, "*.dll").Select(Path.GetFileName).ToArray();
 
         /// <summary>
         /// Converts to bool.
@@ -368,6 +378,11 @@ namespace csscript
             return "\\u" + ((int)c).ToString("x4");
         }
 
+        internal static bool IsWhiteSpace(this char c)
+        {
+            return char.IsWhiteSpace(c) || c == '\uFEFF';
+        }
+
 #if class_lib
 
         internal static ExpandStatementDelegate ExpandAlgorithm { get; set; }
@@ -385,6 +400,31 @@ namespace csscript
             CSharpParser.UnescapeDirectiveDelimiters(Environment.ExpandEnvironmentVariables(text)).Trim();
 
 #endif
+
+        internal static void NotePathExtraDirs(this Process p, IEnumerable<string> dirs)
+        {
+            Environment.SetEnvironmentVariable("CSSCRIPT_PROCESS_PATH_EXTRA_" + p.Id, dirs.JoinBy(";"));
+        }
+
+        internal static string[] RetreiveProcessPathExtraDirs(this Process p)
+        {
+            var dirs = Environment.GetEnvironmentVariable("CSSCRIPT_PROCESS_PATH_EXTRA_" + p.Id);
+            return dirs?.Split(';') ?? new string[0];
+        }
+
+        internal static void AddToSystemPath(this string[] dirs)
+        {
+            if (dirs.Any())
+            {
+                var newPathDirs = dirs
+                    .Where(x => x.HasText())
+                    .Select(x => x);
+
+                var currentPath = Environment.GetEnvironmentVariable("PATH").Split(';').Where(x => x.HasText());
+
+                Environment.SetEnvironmentVariable("PATH", currentPath.Concat(newPathDirs).Distinct().JoinBy(";"));
+            }
+        }
 
         internal static string NormaliseAsDirectiveOf(this string statement, string parentScript, char multiPathDelimiter)
         {
@@ -417,7 +457,7 @@ namespace csscript
                 if (value.Equals(pattern))
                     return result(null);
 
-            return default(T2);
+            return default;
         }
 
         /// <summary>
@@ -465,5 +505,28 @@ namespace csscript
         /// Clears the collection.
         /// </summary>
         public void Clear() => Items.ForEach(File.Delete);
+    }
+
+    static class TempTilesManagement
+    {
+        public static bool IsParentProcessRunning(this string tempFile)
+        {
+            string name = Path.GetFileName(tempFile);
+
+            int pos = name.IndexOf('.');
+
+            if (pos > 0)
+            {
+                string pidValue = name.Substring(0, pos);
+
+                if (int.TryParse(pidValue, out int pid))
+                {
+                    //Didn't use GetProcessById as it throws if pid is not running
+                    if (Process.GetProcesses().Any(p => p.Id == pid))
+                        return true; //still running
+                }
+            }
+            return false;
+        }
     }
 }

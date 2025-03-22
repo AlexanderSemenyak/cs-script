@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using static System.Environment;
 using System.IO;
@@ -6,6 +7,8 @@ using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using CSScripting;
 
 [assembly: InternalsVisibleTo("cscs.tests")]
@@ -99,7 +102,7 @@ namespace csscript
                 }
                 catch (CLIException e)
                 {
-                    if (!(e is CLIExitRequest))
+                    if (e is not CLIExitRequest)
                     {
                         Console.WriteLine(e.Message);
                         Environment.ExitCode = e.ExitCode;
@@ -126,14 +129,14 @@ namespace csscript
     /// </summary>
     class AppInfo
     {
-        public static string appName = Environment.GetEnvironmentVariable("ENTRY_ASM") ?? Assembly.GetExecutingAssembly().GetName().Name;
-        public static bool appConsole = true;
+        public static string AppName = Environment.GetEnvironmentVariable("ENTRY_ASM") ?? Assembly.GetExecutingAssembly().GetName().Name;
+        public static bool AppConsole = true;
 
-        public static string appLogo =>
+        public static string AppLogo =>
             $"C# Script execution engine (.NET Core). Version {Assembly.GetExecutingAssembly().GetName().Version}.{NewLine}" +
             "Copyright (C) 2004-2023 Oleg Shilo." + NewLine;
 
-        public static string appLogoShort =>
+        public static string AppLogoShort =>
             $"C# Script execution engine (.NET Core). Version{Assembly.GetExecutingAssembly().GetName().Version}.{NewLine}";
     }
 
@@ -151,10 +154,11 @@ namespace csscript
                 //collect abandoned temp files
                 if (Environment.GetEnvironmentVariable("CSScript_Suspend_Housekeeping") == null)
                 {
-                    Runtime.CleanUnusedTmpFiles(Runtime.GetScriptTempDir(), "*????????-????-????-????-????????????.dll", false);
+                    Runtime.CleanUnusedTmpFiles(Runtime.GetScriptTempDir(), "*????????-????-????-????-????????????.dll", true);
                     Runtime.CleanSnippets();
                     Runtime.CleanAbandonedCache();
                     Runtime.CleanExitedScripts();
+                    Runtime.ClearScriptProcessLog();
                 }
             }
             catch { }
@@ -170,13 +174,12 @@ namespace csscript
 
                 Utils.IsDefaultConsoleEncoding = false;
 
-                if (originalEncoding == null)
-                    originalEncoding = oldEncoding;
+                originalEncoding ??= oldEncoding;
             }
             catch { }
         }
 
-        public static void OnStart()
+        public static void OnStart(params string[] args)
         {
             //work around of nasty Win7x64 problem.
             //http://superuser.com/questions/527728/cannot-resolve-windir-cannot-modify-path-or-path-being-reset-on-boot
@@ -200,6 +203,9 @@ namespace csscript
             }
 
             Utils.ProcessNewEncoding = ProcessNewEncoding;
+
+            if (args.Any(a => CSSUtils.Args.Same(a, AppArgs.ls, AppArgs.list)))
+                Task.Run(Runtime.LogScriptProcess);
 
             ProcessNewEncoding(null);
 

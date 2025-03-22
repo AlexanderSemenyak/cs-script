@@ -14,7 +14,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
-    <Version>4.8.17.0</Version>
+    <Version>4.9.4.1</Version>
     <Authors>Oleg Shilo</Authors>
     <Description>CS-Script engine Class Library for .NET 5 (and higher)</Description>
     <Copyright>(C) 2018-2023 Oleg Shilo</Copyright>
@@ -29,15 +29,24 @@
 ## Changes
 
 ### CLI
-- #378: Bump Request -&gt; Microsoft.CodeAnalysis.CSharp.Scripting 4.10.0
 
+v4.9.4.0 functionality
+
+- #406: Custom DLL (CommandGathering.dll) Fails Compile-Time Namespace Resolution with //css_ref
+- Improved `css -cmd` UX when generating custom commands descriptions.
+- Updated custom commands `-pkill` to allow killing the process by PID.
+- Added custom commands:
+  - `-runas`
+  - `-which`
+  - `-who`
 
 ### CSScriptLib
-- #378: Bump Request -&gt; Microsoft.CodeAnalysis.CSharp.Scripting 4.10.0</PackageReleaseNotes>
+
+- no changes</PackageReleaseNotes>
     <PackageRequireLicenseAcceptance>true</PackageRequireLicenseAcceptance>
-    <AssemblyVersion>4.8.17.0</AssemblyVersion>
-    <FileVersion>4.8.17.0</FileVersion>
-    <PackageVersion>4.8.17.0</PackageVersion>
+    <AssemblyVersion>4.9.4.1</AssemblyVersion>
+    <FileVersion>4.9.4.1</FileVersion>
+    <PackageVersion>4.9.4.1</PackageVersion>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageIcon>css_logo.png</PackageIcon>
     <SignAssembly>True</SignAssembly>
@@ -86,10 +95,11 @@
     <Compile Include="..\..\..\cscs\Utils\WildCardExtensions.cs" Link="Utils\WildCardExtensions.cs" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Scripting" Version="4.10.0" />
-    <PackageReference Include="Microsoft.CodeAnalysis.Scripting.Common" Version="4.10.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Scripting" Version="4.11.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Scripting.Common" Version="4.11.0" />
     <PackageReference Include="System.Runtime.Loader" Version="4.3.0" />
-    <PackageReference Include="Microsoft.Extensions.DependencyModel" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.DependencyModel" Version="9.0.0" />
+    <PackageReference Include="System.Text.Json" Version="9.0.0" />
   </ItemGroup>
   <ItemGroup>
     <None Include="..\..\..\logo\css_logo.png">

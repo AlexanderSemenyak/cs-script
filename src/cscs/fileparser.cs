@@ -1,10 +1,10 @@
-﻿using csscript;
-using CSScripting;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using csscript;
+using CSScripting;
 
 namespace CSScriptLib
 {
@@ -262,18 +262,18 @@ namespace CSScriptLib
 
         internal static string[] ResolveFilesDefault(string file, string[] extraDirs, bool throwOnError)
         {
-            string[] retval = _ResolveFiles(file, extraDirs, "");
+            string[] retval = FindFiles(file, extraDirs, "");
             if (retval.Length == 0)
-                retval = _ResolveFiles(file, extraDirs, ".cs");
+                retval = FindFiles(file, extraDirs, ".cs");
             if (retval.Length == 0)
-                retval = _ResolveFiles(file, extraDirs, ".csl"); //script link file
+                retval = FindFiles(file, extraDirs, ".csl"); //script link file
             if (retval.Length == 0)
             {
                 // a complex command folder. IE:
                 // ├── -self
-                // │ └── -test
+                // │ ├── -test
                 // │ ├── -run.cs
-                // │ ├── utils.cs
+                // │ └── utils.cs
                 // │
                 // ├── log.cs │
                 // └── test_definitions.cs.
@@ -281,12 +281,28 @@ namespace CSScriptLib
                 // possible CLI command: css -self-test css -self-test-run css -self-test-log
                 if (file.GetFileName().StartsWith("-"))
                 {
-                    var filePath = "-" + file.TrimStart('-').Replace("-", $"{Path.DirectorySeparatorChar}-");
-                    retval = _ResolveFiles(filePath, extraDirs, "");
+                    // ensure we
+                    var prefix = new string(file.TakeWhile(x => x == '-').ToArray());
+
+                    var filePath = prefix + file.TrimStart('-').Replace("-", $"{Path.DirectorySeparatorChar}-");
+                    retval = FindFiles(filePath, extraDirs, "");
+
                     if (retval.IsEmpty())
-                        retval = _ResolveFiles(filePath, extraDirs, ".cs");
+                    {
+                        retval = FindFiles(filePath, extraDirs, ".cs");
+                    }
+
                     if (retval.IsEmpty())
-                        retval = _ResolveFiles(filePath.PathJoin("-run.cs"), extraDirs, "");
+                    {
+                        retval = FindFiles(filePath.PathJoin("-run.cs"), extraDirs, "", returnAllFoundFiles: true);
+                        if (retval.Count() > 1)
+                        {
+                            retval = retval
+                                .OrderByDescending(x => new Version(x.GetCommandScriptVersion()))
+                                .Take(1)
+                                .ToArray();
+                        }
+                    }
                 }
             }
 
@@ -349,7 +365,7 @@ namespace CSScriptLib
 
                             List<string> result = new List<string>();
 
-                            if (Directory.Exists(dir))
+                            if (Directory.Exists(searchDir))
                                 foreach (string item in Directory.GetFiles(searchDir, name))
                                     result.Add(Path.GetFullPath(item));
 
@@ -366,10 +382,15 @@ namespace CSScriptLib
             return new string[0];
         }
 
-        static string[] _ResolveFiles(string file, string[] extraDirs, string extension)
+        static string[] FindFiles(string file, string[] extraDirs, string extension, bool returnAllFoundFiles = true)
         {
+            var result = new List<string[]>();
+            var probingDirs = new List<string>(extraDirs);
+            if (!probingDirs.Contains(Environment.CurrentDirectory))
+                probingDirs.Insert(0, Environment.CurrentDirectory);
+
             if (Path.IsPathRooted(file))
-                return new[] { file };
+                result.Add(new[] { file });
 
             string fileName = file;
 
@@ -378,37 +399,37 @@ namespace CSScriptLib
                 fileName += extension;
 
             if (Path.IsPathRooted(fileName) && File.Exists(fileName))
-                return new[] { fileName };
+                result.Add(new[] { fileName });
 
             string[] files;
-            if (!extraDirs.Contains(Environment.CurrentDirectory))
-            {
-                files = LocateFiles(Environment.CurrentDirectory, fileName);
-                if (files.Length > 0)
-                    return files;
-            }
 
-            //arbitrary directories
-            if (extraDirs != null)
+            //current dir + arbitrary directories
+            if (!result.Any() || returnAllFoundFiles)
             {
-                foreach (string dir in extraDirs)
+                foreach (string dir in probingDirs)
                 {
                     files = LocateFiles(dir, fileName);
                     if (files.Any())
-                        return files;
+                        result.Add(files);
                 }
             }
 
             //PATH
-            string[] pathDirs = Environment.GetEnvironmentVariable("PATH").Replace("\"", "").Split(';');
-            foreach (string dir in pathDirs)
+            if (!result.Any() || returnAllFoundFiles)
             {
-                files = LocateFiles(dir, fileName);
-                if (files.Any())
-                    return files;
+                string[] pathDirs = Environment.GetEnvironmentVariable("PATH").Replace("\"", "").Split(';');
+                foreach (string dir in pathDirs)
+                {
+                    files = LocateFiles(dir, fileName);
+                    if (files.Any())
+                        result.Add(files);
+                }
             }
 
-            return new string[0];
+            if (returnAllFoundFiles)
+                return result.SelectMany(x => x).ToArray();
+            else
+                return result.FirstOrDefault();
         }
 
         static public string headerTemplate =
@@ -424,7 +445,7 @@ namespace CSScriptLib
 #if class_lib
             return string.Format(headerTemplate, "CS-Script", path, fileName, DateTime.Now);
 #else
-            return string.Format(headerTemplate, csscript.AppInfo.appLogoShort, path, fileName, DateTime.Now);
+            return string.Format(headerTemplate, csscript.AppInfo.AppLogoShort, path, fileName, DateTime.Now);
 #endif
         }
 

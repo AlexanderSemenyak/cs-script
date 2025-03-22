@@ -37,6 +37,7 @@ using System.Linq;
 using System.Numerics;
 using System.Reflection;
 using System.Runtime.Loader;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.CodeAnalysis;
 
@@ -506,7 +507,11 @@ namespace CSScriptLib
             }
             finally
             {
-                File.Delete(tempScriptFile);
+                Task.Run(() =>
+                {
+                    Thread.Sleep(50); // AV likes locking the files while scanning them, so let's wait a little
+                    tempScriptFile.FileDelete(rethrow: false);
+                });
             }
         }
 
@@ -839,9 +844,8 @@ namespace CSScriptLib
 
             var dirs = globalProbingDirs.ToArray();
 
-            string asmFile = AssemblyResolver.FindAssembly(assembly, dirs).FirstOrDefault();
-            if (asmFile == null)
-                throw new Exception("Cannot find referenced assembly '" + assembly + "'");
+            string asmFile = AssemblyResolver.FindAssembly(assembly, dirs).FirstOrDefault()
+                ?? throw new Exception("Cannot find referenced assembly '" + assembly + "'");
 
             ReferenceAssembly(Assembly.LoadFile(asmFile));
             return this;
@@ -1058,7 +1062,14 @@ namespace CSScriptLib
             }
             else if (assemblies == DomainAssemblies.AllStaticNonGAC)
             {
+#if net35
                 relevantAssemblies = relevantAssemblies.Where(x => !x.GlobalAssemblyCache && !x.IsDynamic() && x != mscorelib).ToArray();
+#else
+                // .NET Core does not support GlobalAssemblyCache property but allows its execution even though its obsolete.
+                // However on some runtimes GlobalAssemblyCache actually throws.
+                // So it's better to use the same algorithm as for AllStatic as GAC is not supported anyway.
+                relevantAssemblies = relevantAssemblies.Where(x => !x.IsDynamic() && x != mscorelib).ToArray();
+#endif
             }
             else if (assemblies == DomainAssemblies.None)
             {

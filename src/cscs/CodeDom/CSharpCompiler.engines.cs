@@ -26,7 +26,7 @@ namespace CSScripting.CodeDom
 {
     public partial class CSharpCompiler
     {
-        CompilerResults CompileAssemblyFromFileBatch_with_Build(CompilerParameters options, string[] fileNames)
+        static CompilerResults CompileAssemblyFromFileBatch_with_Build(CompilerParameters options, string[] fileNames)
         {
             var platform = options.GetTargetPlatform();
 
@@ -49,6 +49,7 @@ namespace CSScripting.CodeDom
             if (!Runtime.IsSdkInstalled())
                 Console.WriteLine("WARNING: .NET SDK is not installed. It is required for CS-Script (with `csc` engine) to function properly.");
 
+            // remove compiler options that are present in the project file anyway
             var cliOptions = options.CompilerOptions?
                                     .Replace("/target:winexe", "")
                                     .Replace("/platform:x86", "")
@@ -63,7 +64,7 @@ namespace CSScripting.CodeDom
                                                       onOutput: x => result.Output.Add(x),
                                                       onError: x => Console.Error.WriteLine("error> " + x),
                                                       timeout: 20000,
-                                                      assembly);
+                                                      buildArtifact: assembly);
             Profiler.get("compiler").Stop();
             Thread.Sleep(50);
             if (CSExecutor.options.verbose)
@@ -212,9 +213,13 @@ namespace CSScripting.CodeDom
                 sources.Add(new_file);
             });
 
+            // See CSharpCompiler.CreateProject for facade asm exclusion reasoning
+            bool not_facade_asm_in_engine_dir(string asm)
+                => !(asm.GetDirName() == engine_dir && asm.IsPossibleFacadeAssembly());
+
             var ref_assemblies = options.ReferencedAssemblies.Where(x => !x.IsSharedAssembly())
                                                              .Where(Path.IsPathRooted)
-                                                             .Where(asm => asm.GetDirName() != engine_dir)
+                                                             .Where(not_facade_asm_in_engine_dir)
                                                              .ToList();
 
             if (CSExecutor.options.enableDbgPrint && !CSExecutor.options.isNetFx)
@@ -234,11 +239,12 @@ namespace CSScripting.CodeDom
                 result.Errors.Add(new CompilerError
                 {
                     ErrorText = $"In order to compile XAML you need to use 'dotnet' compiler. " + NewLine +
-                                $"You can set it by any of this methods:" + NewLine +
-                                $"- for a specific script from code with \"//css_engine dotnet\" directive" + NewLine +
-                                $"- for the process with a CLI argument \"dotnet .{Path.DirectorySeparatorChar}cscs.dll -engine:dotnet <script>\"" + NewLine +
-                                $"- globally as a config value \"dotnet .{Path.DirectorySeparatorChar}cscs.dll -config:set:DefaultCompilerEngine=dotnet\""
+                                        $"You can set it by any of this methods:" + NewLine +
+                                        $"- for a specific script from code with \"//css_engine dotnet\" directive" + NewLine +
+                                        $"- for the process with a CLI argument \"dotnet .{Path.DirectorySeparatorChar}cscs.dll -engine:dotnet <script>\"" + NewLine +
+                                        $"- globally as a config value \"dotnet .{Path.DirectorySeparatorChar}cscs.dll -config:set:DefaultCompilerEngine=dotnet\""
                 }); ;
+
                 return result;
             }
 
@@ -253,10 +259,12 @@ namespace CSScripting.CodeDom
 
             var refs_args = new List<string>();
             var source_args = new List<string>();
-            var common_args = new List<string>();
+            var common_args = new List<string>
+            {
+                "/utf8output",
+                "/nostdlib+"
+            };
 
-            common_args.Add("/utf8output");
-            common_args.Add("/nostdlib+");
             if (options.GenerateExecutable)
                 common_args.Add("/t:exe");
             else
@@ -434,11 +442,11 @@ namespace CSScripting.CodeDom
             result.ProcessErrors();
 
             result.Errors
-                  .ForEach(x =>
-                  {
-                      // by default x.FileName is a file name only
-                      x.FileName = fileNames.FirstOrDefault(f => f.EndsWith(x.FileName ?? "")) ?? x.FileName;
-                  });
+                   .ForEach(x =>
+                    {
+                        // by default x.FileName is a file name only
+                        x.FileName = fileNames.FirstOrDefault(f => f.EndsWith(x.FileName ?? "")) ?? x.FileName;
+                    });
 
             if (result.NativeCompilerReturnValue == 0 && File.Exists(assembly))
             {
